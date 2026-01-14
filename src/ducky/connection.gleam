@@ -12,7 +12,8 @@ pub opaque type Connection {
 
 /// Opens a connection to a DuckDB database.
 ///
-/// ## Examples
+/// Must call `close()` when done. Use `with_connection()` instead
+/// for automatic cleanup.
 ///
 /// ```gleam
 /// connect(":memory:")
@@ -60,4 +61,60 @@ pub fn path(connection: Connection) -> String {
 /// This is an internal function for use by other modules in the ducky package.
 pub fn native(connection: Connection) -> ffi.NativeConnection {
   connection.native
+}
+
+/// Executes operations with automatic connection cleanup.
+///
+/// Connection closes automatically on success or error.
+///
+/// ```gleam
+/// use conn <- with_connection(":memory:")
+/// query.query(conn, "SELECT 42")
+/// ```
+pub fn with_connection(
+  path: String,
+  callback: fn(Connection) -> Result(a, Error),
+) -> Result(a, Error) {
+  use conn <- result.try(connect(path))
+  let result = callback(conn)
+  let _ = close(conn)
+  result
+}
+
+/// Executes operations within a transaction.
+///
+/// Commits on success, rolls back on error.
+///
+/// ```gleam
+/// transaction(conn, fn(conn) {
+///   use _ <- result.try(query.query(conn, "UPDATE accounts ..."))
+///   query.query(conn, "SELECT * FROM accounts")
+/// })
+/// ```
+pub fn transaction(
+  conn: Connection,
+  callback: fn(Connection) -> Result(a, Error),
+) -> Result(a, Error) {
+  use _ <- result.try(
+    ffi.execute_query(conn.native, "BEGIN TRANSACTION", [])
+    |> result.map(fn(_) { Nil })
+    |> result.map_error(error_decoder.decode_nif_error),
+  )
+
+  case callback(conn) {
+    Ok(value) -> {
+      use _ <- result.try(
+        ffi.execute_query(conn.native, "COMMIT", [])
+        |> result.map(fn(_) { Nil })
+        |> result.map_error(error_decoder.decode_nif_error),
+      )
+      Ok(value)
+    }
+    Error(err) -> {
+      let _ =
+        ffi.execute_query(conn.native, "ROLLBACK", [])
+        |> result.map(fn(_) { Nil })
+      Error(err)
+    }
+  }
 }

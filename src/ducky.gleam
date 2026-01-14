@@ -42,6 +42,10 @@ pub const connect = connection.connect
 
 pub const close = connection.close
 
+pub const with_connection = connection.with_connection
+
+pub const transaction = connection.transaction
+
 pub const query = query.query
 
 pub const query_params = query.query_params
