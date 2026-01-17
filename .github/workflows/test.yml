@@ -21,9 +21,9 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-      - run: cargo build --release --manifest-path native/ducky_nif/Cargo.toml
+      - run: cargo build --release --manifest-path priv/ducky_nif/Cargo.toml
       - run: mkdir -p priv/native
-      - run: cp native/ducky_nif/target/release/libducky_nif.so priv/native/ducky_nif.so
+      - run: cp priv/ducky_nif/target/release/libducky_nif.so priv/native/ducky_nif.so
       - run: gleam deps download
       - run: gleam test
       - run: gleam format --check src test
