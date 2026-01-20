@@ -1,5 +1,6 @@
 //// Type mappings between DuckDB and Gleam.
 
+import gleam/dict.{type Dict}
 import gleam/option.{type Option}
 
 /// A value from a DuckDB result set.
@@ -19,6 +20,7 @@ pub type Value {
   Time(Int)
   Interval(Int)
   List(List(Value))
+  Struct(Dict(String, Value))
 }
 
 /// A single row from a query result.
@@ -35,6 +37,27 @@ pub type DataFrame {
 pub fn get(row: Row, index: Int) -> Option(Value) {
   case row {
     Row(values) -> list_at(values, index)
+  }
+}
+
+/// Get a field value from a struct by field name.
+///
+/// Returns None if the value is not a Struct or the field does not exist.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let person = Struct(dict.from_list([#("name", Text("Alice")), #("age", Integer(30))]))
+/// field(person, "name")
+/// // => Some(Text("Alice"))
+///
+/// field(person, "unknown")
+/// // => None
+/// ```
+pub fn field(value: Value, name: String) -> Option(Value) {
+  case value {
+    Struct(fields) -> dict.get(fields, name) |> option.from_result
+    _ -> option.None
   }
 }
 

@@ -1,6 +1,8 @@
 import ducky
 import ducky/types
+import gleam/dict
 import gleam/list
+import gleam/option
 import gleam/result
 import gleeunit
 import gleeunit/should
@@ -232,4 +234,87 @@ pub fn transaction_rollback_on_error_test() {
   let assert types.Row([types.Integer(balance)]) = row
   balance
   |> should.equal(100)
+}
+
+pub fn query_struct_simple_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT {'name': 'Alice', 'age': 30} as person")
+
+  result.columns
+  |> should.equal(["person"])
+
+  let assert [row] = result.rows
+  let assert types.Row([person_value]) = row
+  let assert types.Struct(fields) = person_value
+  let assert Ok(name_value) = dict.get(fields, "name")
+  let assert Ok(age_value) = dict.get(fields, "age")
+
+  name_value
+  |> should.equal(types.Text("Alice"))
+
+  age_value
+  |> should.equal(types.Integer(30))
+}
+
+pub fn query_struct_with_null_field_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT {'name': 'Bob', 'email': NULL} as person")
+
+  let assert [row] = result.rows
+  let assert types.Row([person_value]) = row
+  let assert types.Struct(fields) = person_value
+
+  let assert Ok(email_value) = dict.get(fields, "email")
+  email_value
+  |> should.equal(types.Null)
+}
+
+pub fn query_nested_struct_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(result) =
+    ducky.query(
+      conn,
+      "SELECT {'person': {'name': 'Charlie', 'age': 25}, 'city': 'NYC'} as data",
+    )
+
+  let assert [row] = result.rows
+  let assert types.Row([data_value]) = row
+  let assert types.Struct(outer_fields) = data_value
+
+  // Get nested struct
+  let assert Ok(person_value) = dict.get(outer_fields, "person")
+  let assert types.Struct(person_fields) = person_value
+
+  let assert Ok(name_value) = dict.get(person_fields, "name")
+  name_value
+  |> should.equal(types.Text("Charlie"))
+
+  let assert Ok(age_value) = dict.get(person_fields, "age")
+  age_value
+  |> should.equal(types.Integer(25))
+
+  // Get top-level field
+  let assert Ok(city_value) = dict.get(outer_fields, "city")
+  city_value
+  |> should.equal(types.Text("NYC"))
+}
+
+pub fn query_struct_field_accessor_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT {'x': 10, 'y': 20} as point")
+
+  let assert [row] = result.rows
+  let assert types.Row([point_value]) = row
+
+  types.field(point_value, "x")
+  |> should.equal(option.Some(types.Integer(10)))
+
+  types.field(point_value, "y")
+  |> should.equal(option.Some(types.Integer(20)))
+
+  types.field(point_value, "z")
+  |> should.equal(option.None)
 }

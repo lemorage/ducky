@@ -188,8 +188,111 @@ fn value_to_term<'a>(env: Env<'a>, value: ValueRef) -> NifResult<Term<'a>> {
             Ok(text.encode(env))
         }
         ValueRef::Blob(b) => Ok(b.encode(env)),
-        _ => Ok(atoms::null().encode(env)), // TODO: Unsupported types default to null for now
+        ValueRef::Struct(struct_array, idx) => encode_struct(env, struct_array, idx),
+        other => {
+            let type_name = format!("Unsupported ValueRef: {:?}", other);
+            Err(rustler::Error::Term(Box::new(type_name)))
+        }
     }
+}
+
+/// Encodes a DuckDB struct as an Erlang map with recursive field encoding.
+fn encode_struct<'a>(
+    env: Env<'a>,
+    struct_array: &duckdb::arrow::array::StructArray,
+    row_idx: usize,
+) -> NifResult<Term<'a>> {
+    use duckdb::arrow::array::{Array, AsArray};
+    use duckdb::arrow::datatypes::DataType;
+    use rustler::types::map::map_new;
+
+    let mut map = map_new(env);
+
+    // Iterate over struct fields
+    for (field_idx, field) in struct_array.columns().iter().enumerate() {
+        // Get field name from schema
+        let field_name = struct_array
+            .fields()
+            .get(field_idx)
+            .map(|f| f.name().as_str())
+            .unwrap_or("unknown");
+
+        // Check if this specific field is null
+        if field.is_null(row_idx) {
+            map = map.map_put(field_name.encode(env), atoms::null().encode(env))?;
+            continue;
+        }
+
+        // Create the appropriate ValueRef variant based on child field type
+        let child_value_ref = match field.data_type() {
+            DataType::Boolean => {
+                let arr = field.as_boolean();
+                ValueRef::Boolean(arr.value(row_idx))
+            }
+            DataType::Int8 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::Int8Type>();
+                ValueRef::TinyInt(arr.value(row_idx))
+            }
+            DataType::Int16 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::Int16Type>();
+                ValueRef::SmallInt(arr.value(row_idx))
+            }
+            DataType::Int32 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::Int32Type>();
+                ValueRef::Int(arr.value(row_idx))
+            }
+            DataType::Int64 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::Int64Type>();
+                ValueRef::BigInt(arr.value(row_idx))
+            }
+            DataType::UInt8 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::UInt8Type>();
+                ValueRef::UTinyInt(arr.value(row_idx))
+            }
+            DataType::UInt16 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::UInt16Type>();
+                ValueRef::USmallInt(arr.value(row_idx))
+            }
+            DataType::UInt32 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::UInt32Type>();
+                ValueRef::UInt(arr.value(row_idx))
+            }
+            DataType::UInt64 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::UInt64Type>();
+                ValueRef::UBigInt(arr.value(row_idx))
+            }
+            DataType::Float32 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
+                ValueRef::Float(arr.value(row_idx))
+            }
+            DataType::Float64 => {
+                let arr = field.as_primitive::<duckdb::arrow::datatypes::Float64Type>();
+                ValueRef::Double(arr.value(row_idx))
+            }
+            DataType::Utf8 => {
+                let arr = field.as_string::<i32>();
+                ValueRef::Text(arr.value(row_idx).as_bytes())
+            }
+            DataType::Binary => {
+                let arr = field.as_binary::<i32>();
+                ValueRef::Blob(arr.value(row_idx))
+            }
+            DataType::Struct(_) => {
+                let child_struct = field.as_struct();
+                ValueRef::Struct(child_struct, row_idx)
+            }
+            _ => {
+                // Unsupported child type, encode as null
+                map = map.map_put(field_name.encode(env), atoms::null().encode(env))?;
+                continue;
+            }
+        };
+
+        let term_value = value_to_term(env, child_value_ref)?;
+        map = map.map_put(field_name.encode(env), term_value)?;
+    }
+
+    Ok(map)
 }
 
 /// Core statement execution logic for all queries.

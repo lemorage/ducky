@@ -5,6 +5,7 @@ import ducky/error.{type Error}
 import ducky/internal/error_decoder
 import ducky/internal/ffi
 import ducky/types.{type DataFrame, type Value}
+import gleam/dict
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/list
@@ -64,8 +65,10 @@ pub fn query_params(
 /// Decodes a dynamic value from the NIF into a typed Value.
 fn decode_value(dyn: dynamic.Dynamic) -> Value {
   // Check if this is the null atom (special case for SQL NULL)
-  case dynamic.classify(dyn) {
+  let classification = dynamic.classify(dyn)
+  case classification {
     "Atom" -> types.Null
+    "Dict" -> decode_struct(dyn)
     _ -> {
       let value_decoder =
         decode.one_of(decode.bool |> decode.map(types.Boolean), or: [
@@ -80,6 +83,28 @@ fn decode_value(dyn: dynamic.Dynamic) -> Value {
       |> result.unwrap(or: types.Null)
     }
   }
+}
+
+/// Decodes an Erlang map into a Struct with recursive value decoding.
+fn decode_struct(dyn: dynamic.Dynamic) -> Value {
+  let decoder =
+    decode.dict(decode.string, decode.dynamic)
+    |> decode.map(fn(fields) {
+      // Recursively decode each value in the struct
+      let decoded_fields =
+        fields
+        |> dict.to_list
+        |> list.map(fn(pair) {
+          let #(key, val) = pair
+          #(key, decode_value(val))
+        })
+        |> dict.from_list
+
+      types.Struct(decoded_fields)
+    })
+
+  decode.run(dyn, decoder)
+  |> result.unwrap(or: types.Null)
 }
 
 /// Converts a Value to a Dynamic for passing to the NIF.
@@ -100,7 +125,8 @@ fn value_to_dynamic(value: Value) -> dynamic.Dynamic {
     | types.Date(_)
     | types.Time(_)
     | types.Interval(_)
-    | types.List(_) -> dynamic.nil()
+    | types.List(_)
+    | types.Struct(_) -> dynamic.nil()
   }
 }
 
