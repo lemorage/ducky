@@ -6,19 +6,40 @@
 
 # Variables
 PROJECT_NAME := ducky
-RUST_MANIFEST := priv/ducky_nif/Cargo.toml
+RUST_NIF_DIR := priv/ducky_nif
+RUST_MANIFEST := $(RUST_NIF_DIR)/Cargo.toml
+RUST_TARGET_DIR := $(RUST_NIF_DIR)/target/release
+NIF_OUTPUT_DIR := priv/native
 VERSION := $(shell grep '^version' gleam.toml | cut -d'"' -f2)
 
-# Colors for output
+# Detect OS for lib extension
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    LIB_EXT := dylib
+    LIB_PREFIX := lib
+else ifeq ($(UNAME_S),Linux)
+    LIB_EXT := so
+    LIB_PREFIX := lib
+else
+    LIB_EXT := dll
+    LIB_PREFIX :=
+endif
+
+NIF_SOURCE := $(RUST_TARGET_DIR)/$(LIB_PREFIX)ducky_nif.$(LIB_EXT)
+NIF_TARGET := $(NIF_OUTPUT_DIR)/ducky_nif.so
+
+# Colors and formatting
 CYAN := \033[0;36m
 GREEN := \033[0;32m
+BOLD := \033[1m
+DIM := \033[2m
 RESET := \033[0m
 
 # Default target
 .DEFAULT_GOAL := help
 
 # Phony targets
-.PHONY: help build test clean format check publish release version dev
+.PHONY: help build build-nif test clean format check publish release version dev
 
 #-----------------------------------------------------------------------------
 # Public targets
@@ -26,19 +47,20 @@ RESET := \033[0m
 
 ## help: Show this help message
 help:
-	@echo "$(CYAN)$(PROJECT_NAME)$(RESET) - Available targets:"
 	@echo ""
-	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /'
+	@echo "  $(BOLD)$(PROJECT_NAME)$(RESET) $(DIM)v$(VERSION)$(RESET)"
+	@echo "  ─────────────────────"
 	@echo ""
-
-## dev: Development workflow (check + format + build + test)
-dev: check format build test
-	@echo "$(GREEN)✓ Development cycle complete$(RESET)"
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //' | awk -F': ' '{ \
+		printf "  $(CYAN)%-10s$(RESET) %s\n", $$1, $$2 \
+	}'
+	@echo ""
 
 ## clean: Clean all build artifacts
 clean:
 	@echo "$(CYAN)Cleaning build artifacts...$(RESET)"
 	rm -rf build/
+	rm -f $(NIF_TARGET)
 	cargo clean --manifest-path=$(RUST_MANIFEST)
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
 
@@ -48,6 +70,10 @@ docs:
 	gleam docs build
 	@echo "$(GREEN)✓ Documentation generated$(RESET)"
 	@echo "Open: build/dev/docs/$(PROJECT_NAME)/index.html"
+
+## dev: Development workflow (check + format + build + test)
+dev: check format build test
+	@echo "$(GREEN)✓ Development cycle complete$(RESET)"
 
 ## release: Full release workflow (version, commit, tag, publish)
 release:
@@ -113,14 +139,21 @@ publish: clean test
 		echo "Publish cancelled"; \
 	fi
 
-build:
+build-nif:
+	@echo "$(CYAN)Building Rust NIF...$(RESET)"
+	@cargo build --manifest-path=$(RUST_MANIFEST) --release
+	@mkdir -p $(NIF_OUTPUT_DIR)
+	@cp $(NIF_SOURCE) $(NIF_TARGET)
+	@echo "$(GREEN)✓ NIF built and copied to $(NIF_TARGET)$(RESET)"
+
+build: build-nif
 	@echo "$(CYAN)Building Gleam project...$(RESET)"
-	gleam build
+	@gleam build
 	@echo "$(GREEN)✓ Build complete$(RESET)"
 
-test:
+test: build-nif
 	@echo "$(CYAN)Running tests...$(RESET)"
-	gleam test
+	@gleam test
 	@echo "$(GREEN)✓ Tests passed$(RESET)"
 
 format:
