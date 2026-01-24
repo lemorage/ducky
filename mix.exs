@@ -7,15 +7,8 @@ defmodule Ducky.MixProject do
       version: "0.1.0",
       elixir: "~> 1.14",
       erlc_paths: ["src", "build/dev/erlang"],
-      compilers: [:gleam, :rustler] ++ Mix.compilers(),
-      rustler_crates: [
-        ducky_nif: [
-          path: "priv/ducky_nif",
-          mode: :release
-        ]
-      ],
+      compilers: Mix.compilers(),
       package: package(),
-      aliases: aliases(),
       deps: deps()
     ]
   end
@@ -24,7 +17,9 @@ defmodule Ducky.MixProject do
     [
       files: ~w(
         src
-        priv
+        priv/ducky_nif
+        scripts/fetch_nif.erl
+        rebar.config
         gleam.toml
         LICENSE
         README.md
@@ -40,18 +35,6 @@ defmodule Ducky.MixProject do
   end
 
   defp deps do
-    [
-      {:rustler, "~> 0.37.0", runtime: false}
-    ]
-  end
-
-  defp aliases do
-    [
-      "compile.gleam": &compile_gleam/1
-    ]
-  end
-
-  defp compile_gleam(_args) do
-    Mix.shell().cmd("gleam build")
+    []
   end
 end
