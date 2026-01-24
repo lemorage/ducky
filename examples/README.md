@@ -15,3 +15,4 @@ gleam run -m connect_and_query
 3. `automatic_cleanup`: Auto-close connections
 4. `transactions`: Commit/rollback operations
 5. `extract_typed_values`: Pattern match and extract data
+6. `complex_types`: STRUCT, temporal types, and LIST usage
