@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-01-24
+
+### Added
+- Pre-built binaries for 5 platforms (macOS ARM64/x64, Linux ARM64/x64, Windows x64)
+- Automatic NIF fetch at build time with source compilation fallback
+- STRUCT types with `field()` accessor for composite data
+- Temporal types: DATE, TIME, TIMESTAMP, INTERVAL
+- LIST types with recursive nesting
+- Example: `complex_types` demonstrating advanced type usage
+
 ## [0.1.0] - 2026-01-16
 
 ### Added

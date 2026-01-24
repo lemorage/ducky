@@ -15,6 +15,7 @@ gleam add ducky
 
 ```gleam
 import ducky
+import ducky/types
 
 use conn <- ducky.with_connection("data.db")
 ducky.query_params(conn, "SELECT * FROM users WHERE id = ?", [

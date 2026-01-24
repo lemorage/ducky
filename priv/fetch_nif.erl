@@ -138,19 +138,17 @@ compile_from_source(OutputPath) ->
         false -> {error, no_rust_source};
         true ->
             io:format("Building Rust NIF (this may take 2-3 minutes)...~n"),
-            case os:cmd("cargo build --release --manifest-path=" ++ ManifestPath ++ " 2>&1") of
-                Output ->
-                    SourceLib = find_compiled_lib(),
-                    case filelib:is_file(SourceLib) of
-                        true ->
-                            filelib:ensure_dir(OutputPath),
-                            {ok, _} = file:copy(SourceLib, OutputPath),
-                            ok = file:change_mode(OutputPath, 8#755),
-                            ok;
-                        false ->
-                            io:format("Cargo output: ~s~n", [Output]),
-                            {error, build_failed}
-                    end
+            _Output = os:cmd("cargo build --release --manifest-path=" ++ ManifestPath ++ " 2>&1"),
+            SourceLib = find_compiled_lib(),
+            case filelib:is_file(SourceLib) of
+                true ->
+                    filelib:ensure_dir(OutputPath),
+                    {ok, _} = file:copy(SourceLib, OutputPath),
+                    ok = file:change_mode(OutputPath, 8#755),
+                    ok;
+                false ->
+                    io:format("ERROR: Build failed. Check that Rust toolchain is installed.~n"),
+                    {error, build_failed}
             end
     end.
 

@@ -4,7 +4,7 @@ defmodule Ducky.MixProject do
   def project do
     [
       app: :ducky,
-      version: "0.1.0",
+      version: "0.2.0",
       elixir: "~> 1.14",
       erlc_paths: ["src", "build/dev/erlang"],
       compilers: Mix.compilers(),
@@ -15,10 +15,10 @@ defmodule Ducky.MixProject do
 
   defp package do
     [
+      description: "Use DuckDB in Gleam!",
       files: ~w(
         src
-        priv/ducky_nif
-        scripts/fetch_nif.erl
+        priv
         rebar.config
         gleam.toml
         LICENSE
