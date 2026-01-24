@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-nif:
+    name: Build NIF for ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            rust_target: aarch64-apple-darwin
+            lib_name: libducky_nif.dylib
+            output_name: ducky_nif-aarch64-apple-darwin.so
+
+          # macOS Intel
+          - target: x86_64-apple-darwin
+            os: macos-13
+            rust_target: x86_64-apple-darwin
+            lib_name: libducky_nif.dylib
+            output_name: ducky_nif-x86_64-apple-darwin.so
+
+          # Linux x86_64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            lib_name: libducky_nif.so
+            output_name: ducky_nif-x86_64-unknown-linux-gnu.so
+
+          # Linux ARM64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            rust_target: aarch64-unknown-linux-gnu
+            lib_name: libducky_nif.so
+            output_name: ducky_nif-aarch64-unknown-linux-gnu.so
+            cross: true
+
+          # Windows x64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            lib_name: ducky_nif.dll
+            output_name: ducky_nif-x86_64-pc-windows-msvc.dll
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Configure cross-compilation (Linux ARM64)
+        if: matrix.cross
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml << EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Build NIF
+        working-directory: priv/ducky_nif
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Prepare binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p artifacts
+          cp priv/ducky_nif/target/${{ matrix.rust_target }}/release/${{ matrix.lib_name }} \
+             artifacts/${{ matrix.output_name }}
+          chmod +x artifacts/${{ matrix.output_name }}
+          gzip -9 artifacts/${{ matrix.output_name }}
+
+      - name: Prepare binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts
+          Copy-Item priv/ducky_nif/target/${{ matrix.rust_target }}/release/${{ matrix.lib_name }} `
+                    artifacts/${{ matrix.output_name }}
+          & 'C:\Program Files\Git\usr\bin\gzip.exe' -9 artifacts/${{ matrix.output_name }}
+
+      - name: Generate checksum
+        if: runner.os != 'Windows'
+        run: |
+          cd artifacts
+          shasum -a 256 ${{ matrix.output_name }}.gz > ${{ matrix.output_name }}.gz.sha256
+
+      - name: Generate checksum (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd artifacts
+          $hash = (Get-FileHash -Algorithm SHA256 ${{ matrix.output_name }}.gz).Hash.ToLower()
+          "$hash  ${{ matrix.output_name }}.gz" | Out-File -Encoding ASCII ${{ matrix.output_name }}.gz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nif-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-nif
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: nif-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

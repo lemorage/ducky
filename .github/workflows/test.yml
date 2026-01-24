@@ -9,21 +9,41 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Erlang/OTP and Gleam
+        uses: erlef/setup-beam@v1
         with:
           otp-version: "28"
           gleam-version: "1.14.0"
           rebar3-version: "3"
-          # elixir-version: "1"
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
         with:
-          toolchain: stable
-      - run: cargo build --release --manifest-path priv/ducky_nif/Cargo.toml
-      - run: mkdir -p priv/native
-      - run: cp priv/ducky_nif/target/release/libducky_nif.so priv/native/ducky_nif.so
-      - run: gleam deps download
-      - run: gleam test
-      - run: gleam format --check src test
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            priv/ducky_nif/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('priv/ducky_nif/Cargo.lock') }}
+
+      - name: Build
+        run: gleam build
+
+      - name: Run tests
+        run: gleam test
+
+      - name: Check formatting
+        run: gleam format --check

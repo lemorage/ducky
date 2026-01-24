@@ -17,7 +17,7 @@ main(_Args) ->
             inets:start(),
             ssl:start(),
 
-            Version = "0.1.0", % TODO: Read from gleam.toml
+            Version = read_version(),
             Platform = detect_platform(),
             BinaryName = binary_name(Platform),
             Url = "https://github.com/lemorage/ducky/releases/download/v" ++ Version ++ "/" ++ BinaryName,
@@ -42,8 +42,38 @@ main(_Args) ->
             end
     end.
 
+read_version() ->
+    case file:read_file("gleam.toml") of
+        {ok, Content} ->
+            Lines = string:split(binary_to_list(Content), "\n", all),
+            case find_version_line(Lines) of
+                {ok, Version} -> Version;
+                not_found ->
+                    io:format("ERROR: Could not find 'version =' in gleam.toml~n"),
+                    halt(1)
+            end;
+        {error, Reason} ->
+            io:format("ERROR: Could not read gleam.toml: ~p~n", [Reason]),
+            io:format("Package may be corrupted. Try: gleam clean && gleam build~n"),
+            halt(1)
+    end.
+
+find_version_line([]) -> not_found;
+find_version_line([Line | Rest]) ->
+    Trimmed = string:trim(Line),
+    case string:str(Trimmed, "version = ") of
+        1 ->
+            % Extract version from: version = "0.1.0"
+            case string:split(Trimmed, "\"", all) of
+                [_, Version, _] -> {ok, Version};
+                _ -> find_version_line(Rest)
+            end;
+        _ -> find_version_line(Rest)
+    end.
+
 output_path() ->
-    Base = "build/dev/erlang/ducky/priv/native/ducky_nif",
+    % Output to package-local priv/native/, build system will copy to final location
+    Base = "priv/native/ducky_nif",
     Ext = case os:type() of
         {win32, _} -> ".dll";
         _ -> ".so"
