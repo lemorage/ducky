@@ -86,12 +86,19 @@ release:
 	@$(MAKE) --no-print-directory version NEXT=$(NEXT)
 	@$(MAKE) --no-print-directory test
 	@echo "$(CYAN)Committing changes...$(RESET)"
-	git add gleam.toml mix.exs $(RUST_MANIFEST) priv/ducky_nif/Cargo.lock examples/gleam.toml examples/manifest.toml CHANGELOG.md
+	git add gleam.toml mix.exs $(RUST_MANIFEST) priv/ducky_nif/Cargo.lock priv/VERSION examples/gleam.toml examples/manifest.toml CHANGELOG.md
 	git commit -m "Release v$(NEXT)"
 	@echo "$(CYAN)Creating git tag...$(RESET)"
 	git tag -a "v$(NEXT)" -m "Ducky Release $(NEXT)"
-	@echo "$(CYAN)Pushing to remote...$(RESET)"
-	git push origin master --tags
+	@echo "$(CYAN)Ready to push to remote...$(RESET)"
+	@read -p "Push to origin? [y/N] " answer; \
+	if [ "$$answer" = "y" ] || [ "$$answer" = "Y" ]; then \
+		git push origin master --tags; \
+		echo "$(GREEN)✓ Pushed to remote$(RESET)"; \
+	else \
+		echo "Push cancelled. Run manually: git push origin master --tags"; \
+		exit 1; \
+	fi
 	@$(MAKE) --no-print-directory publish
 	@echo "$(GREEN)✓ Release v$(NEXT) complete!$(RESET)"
 	@echo ""
@@ -116,6 +123,8 @@ version:
 	@echo "  ✓ mix.exs"
 	@sed -i.bak 's/^version = ".*"/version = "$(NEXT)"/' $(RUST_MANIFEST) && rm $(RUST_MANIFEST).bak
 	@echo "  ✓ priv/ducky_nif/Cargo.toml"
+	@echo "$(NEXT)" > priv/VERSION
+	@echo "  ✓ priv/VERSION"
 	@sed -i.bak 's/^version = ".*"/version = "$(NEXT)"/' examples/gleam.toml && rm examples/gleam.toml.bak
 	@echo "  ✓ examples/gleam.toml"
 	@echo "$(CYAN)Rebuilding Rust to update Cargo.lock...$(RESET)"
@@ -128,7 +137,7 @@ version:
 	@echo ""
 	@echo "$(CYAN)Don't forget to update CHANGELOG.md!$(RESET)"
 
-publish: clean test
+publish: clean
 	@echo "$(CYAN)Publishing to Hex...$(RESET)"
 	@echo "Current version: $(VERSION)"
 	@read -p "Proceed with publish? [y/N] " answer; \

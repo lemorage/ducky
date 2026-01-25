@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-01-25
+
+### Fixed
+- **CRITICAL:** Removed `rebar.config` from package that caused build failures
+  `error: there is no code in this directory`.
+
+The file triggered rebar3 compilation but package structure was incompatible.
+v0.2.0 was unusable. Upgrade to v0.2.1 immediately.
+
+### Changed
+- NIF binary now auto-downloads at runtime on first use
+
 ## [0.2.0] - 2026-01-24
 
 ### Added
