@@ -19,7 +19,6 @@ defmodule Ducky.MixProject do
       files: ~w(
         src
         priv
-        rebar.config
         gleam.toml
         LICENSE
         README.md

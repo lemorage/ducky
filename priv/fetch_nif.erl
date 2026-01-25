@@ -7,7 +7,24 @@
 -mode(compile).
 
 main(_Args) ->
-    OutputPath = output_path(),
+    % Always self-locate using script path
+    ScriptPath = escript:script_name(),
+    PrivDir = filename:dirname(ScriptPath),
+    % PrivDir is priv/ directory
+
+    VersionFile = filename:join([PrivDir, "VERSION"]),
+    Version = case filelib:is_file(VersionFile) of
+        true ->
+            read_version_file(VersionFile);
+        false ->
+            % Fallback: try gleam.toml in parent directory
+            ProjectRoot = filename:dirname(PrivDir),
+            GleamToml = filename:join([ProjectRoot, "gleam.toml"]),
+            read_version(GleamToml)
+    end,
+
+    OutputPath = filename:join([PrivDir, "native", "ducky_nif" ++ extension()]),
+    ManifestPath = filename:join([PrivDir, "ducky_nif", "Cargo.toml"]),
 
     % Skip if NIF already exists
     case filelib:is_file(OutputPath) of
@@ -16,44 +33,48 @@ main(_Args) ->
         false ->
             inets:start(),
             ssl:start(),
-
-            Version = read_version(),
             Platform = detect_platform(),
             BinaryName = binary_name(Platform),
             Url = "https://github.com/lemorage/ducky/releases/download/v" ++ Version ++ "/" ++ BinaryName,
 
-            io:format("Acquiring DuckDB NIF for ~s...~n", [Platform]),
-
             case download_and_extract(Url, OutputPath) of
                 ok ->
-                    io:format("✓ Pre-built NIF ready~n"),
                     halt(0);
-                {error, Reason} ->
-                    io:format("Download failed: ~p~n", [Reason]),
-                    io:format("Attempting to compile from source...~n"),
-                    case compile_from_source(OutputPath) of
+                {error, _Reason} ->
+                    % Silent fallback to source compilation
+                    case compile_from_source(OutputPath, ManifestPath) of
                         ok ->
-                            io:format("✓ Compiled from source~n"),
                             halt(0);
                         {error, CompileError} ->
-                            io:format("ERROR: ~p~n", [CompileError]),
+                            io:format("ERROR: Failed to obtain DuckDB NIF: ~p~n", [CompileError]),
+                            io:format("Platform: ~s~n", [Platform]),
                             halt(1)
                     end
             end
     end.
 
-read_version() ->
-    case file:read_file("gleam.toml") of
+read_version_file(VersionPath) ->
+    case file:read_file(VersionPath) of
+        {ok, Content} ->
+            string:trim(binary_to_list(Content));
+        {error, Reason} ->
+            io:format("ERROR: Could not read ~s: ~p~n", [VersionPath, Reason]),
+            io:format("Package may be corrupted. Try: gleam clean && gleam build~n"),
+            halt(1)
+    end.
+
+read_version(GleamTomlPath) ->
+    case file:read_file(GleamTomlPath) of
         {ok, Content} ->
             Lines = string:split(binary_to_list(Content), "\n", all),
             case find_version_line(Lines) of
                 {ok, Version} -> Version;
                 not_found ->
-                    io:format("ERROR: Could not find 'version =' in gleam.toml~n"),
+                    io:format("ERROR: Could not find 'version =' in ~s~n", [GleamTomlPath]),
                     halt(1)
             end;
         {error, Reason} ->
-            io:format("ERROR: Could not read gleam.toml: ~p~n", [Reason]),
+            io:format("ERROR: Could not read ~s: ~p~n", [GleamTomlPath, Reason]),
             io:format("Package may be corrupted. Try: gleam clean && gleam build~n"),
             halt(1)
     end.
@@ -71,14 +92,11 @@ find_version_line([Line | Rest]) ->
         _ -> find_version_line(Rest)
     end.
 
-output_path() ->
-    % Output to package-local priv/native/, build system will copy to final location
-    Base = "priv/native/ducky_nif",
-    Ext = case os:type() of
+extension() ->
+    case os:type() of
         {win32, _} -> ".dll";
         _ -> ".so"
-    end,
-    Base ++ Ext.
+    end.
 
 binary_name(Platform) ->
     Ext = case string:str(Platform, "windows") > 0 of
@@ -115,7 +133,7 @@ detect_platform() ->
     end.
 
 download_and_extract(Url, OutputPath) ->
-    case httpc:request(get, {Url, []}, [{timeout, 30000}], [{body_format, binary}]) of
+    case httpc:request(get, {Url, []}, [{timeout, 120000}], [{body_format, binary}]) of
         {ok, {{_, 200, _}, _Headers, CompressedBody}} ->
             try
                 Body = zlib:gunzip(CompressedBody),
@@ -132,14 +150,12 @@ download_and_extract(Url, OutputPath) ->
             {error, {download_failed, Reason}}
     end.
 
-compile_from_source(OutputPath) ->
-    ManifestPath = "priv/ducky_nif/Cargo.toml",
+compile_from_source(OutputPath, ManifestPath) ->
     case filelib:is_file(ManifestPath) of
         false -> {error, no_rust_source};
         true ->
-            io:format("Building Rust NIF (this may take 2-3 minutes)...~n"),
             _Output = os:cmd("cargo build --release --manifest-path=" ++ ManifestPath ++ " 2>&1"),
-            SourceLib = find_compiled_lib(),
+            SourceLib = find_compiled_lib(ManifestPath),
             case filelib:is_file(SourceLib) of
                 true ->
                     filelib:ensure_dir(OutputPath),
@@ -147,14 +163,16 @@ compile_from_source(OutputPath) ->
                     ok = file:change_mode(OutputPath, 8#755),
                     ok;
                 false ->
-                    io:format("ERROR: Build failed. Check that Rust toolchain is installed.~n"),
                     {error, build_failed}
             end
     end.
 
-find_compiled_lib() ->
-    case os:type() of
-        {unix, darwin} -> "priv/ducky_nif/target/release/libducky_nif.dylib";
-        {unix, _} -> "priv/ducky_nif/target/release/libducky_nif.so";
-        {win32, _} -> "priv/ducky_nif/target/release/ducky_nif.dll"
-    end.
+find_compiled_lib(ManifestPath) ->
+    % ManifestPath is like: /path/to/priv/ducky_nif/Cargo.toml
+    CargoDir = filename:dirname(ManifestPath),
+    LibName = case os:type() of
+        {unix, darwin} -> "libducky_nif.dylib";
+        {unix, _} -> "libducky_nif.so";
+        {win32, _} -> "ducky_nif.dll"
+    end,
+    filename:join([CargoDir, "target", "release", LibName]).
