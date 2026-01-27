@@ -132,7 +132,67 @@ detect_platform() ->
         {O, A} -> io:format("WARNING: Unsupported platform ~s-~s~n", [O, A]), "unknown"
     end.
 
+configure_proxy() ->
+    % Check HTTPS proxy (both lowercase and uppercase)
+    HttpsProxy = case os:getenv("https_proxy") of
+        false -> os:getenv("HTTPS_PROXY");
+        P1 -> P1
+    end,
+    case HttpsProxy of
+        false -> ok;
+        Proxy1 -> set_proxy(Proxy1, https_proxy, "HTTPS")
+    end,
+
+    % Check HTTP proxy
+    HttpProxy = case os:getenv("http_proxy") of
+        false -> os:getenv("HTTP_PROXY");
+        P2 -> P2
+    end,
+    case HttpProxy of
+        false -> ok;
+        Proxy2 -> set_proxy(Proxy2, proxy, "HTTP")
+    end.
+
+set_proxy(ProxyUrl, ProxyType, Name) ->
+    case parse_proxy_url(ProxyUrl) of
+        {ok, {Host, Port}} ->
+            httpc:set_options([{ProxyType, {{Host, Port}, []}}]),
+            ok;
+        {error, _Reason} ->
+            io:format("WARNING: Invalid ~s proxy format: ~s~n", [Name, ProxyUrl]),
+            ok
+    end.
+
+parse_proxy_url(Url) ->
+    % Parse "http://host:port" or "host:port"
+    % Remove protocol if present
+    Stripped = case string:split(Url, "://") of
+        [_, HostPort] -> HostPort;
+        [HostPort] -> HostPort
+    end,
+
+    % Split host:port
+    case string:split(Stripped, ":") of
+        [Host, PortStr] ->
+            CleanPortStr = case string:split(PortStr, "/") of
+                [PortPart | _] -> PortPart;
+                _ -> PortStr
+            end,
+            TrimmedHost = string:trim(Host),
+            case string:to_integer(string:trim(CleanPortStr)) of
+                {Port, ""} when Port > 0 andalso Port < 65536 ->
+                    {ok, {TrimmedHost, Port}};
+                _ ->
+                    {error, invalid_port}
+            end;
+        _ ->
+            {error, invalid_format}
+    end.
+
 download_and_extract(Url, OutputPath) ->
+    % Configure proxy before making HTTP request
+    configure_proxy(),
+
     case httpc:request(get, {Url, []}, [{timeout, 120000}], [{body_format, binary}]) of
         {ok, {{_, 200, _}, _Headers, CompressedBody}} ->
             try
