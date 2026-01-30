@@ -10,6 +10,8 @@ pub type Error {
   Timeout(duration_ms: Int)
   /// Type conversion failed.
   TypeMismatch(expected: String, got: String)
+  /// Unsupported parameter type in query.
+  UnsupportedParameterType(type_name: String)
   /// Generic error from DuckDB.
   DatabaseError(message: String)
 }

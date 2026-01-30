@@ -55,7 +55,7 @@ pub fn query_params(
   sql: String,
   params: List(types.Value),
 ) -> Result(DataFrame, Error) {
-  let dynamic_params = list.map(params, value_to_dynamic)
+  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
 
   ffi.execute_query(connection.native(conn), sql, dynamic_params)
   |> result.map(decode_dataframe)
@@ -157,25 +157,28 @@ fn decode_temporal_array(dyn: dynamic.Dynamic) -> Value {
 fn atom_to_string(atom: dynamic.Dynamic) -> String
 
 /// Converts a Value to a Dynamic for passing to the NIF.
-fn value_to_dynamic(value: Value) -> dynamic.Dynamic {
+fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
   case value {
-    types.Null -> dynamic.nil()
-    types.Boolean(b) -> dynamic.bool(b)
-    types.TinyInt(i) -> dynamic.int(i)
-    types.SmallInt(i) -> dynamic.int(i)
-    types.Integer(i) -> dynamic.int(i)
-    types.BigInt(i) -> dynamic.int(i)
-    types.Float(f) -> dynamic.float(f)
-    types.Double(f) -> dynamic.float(f)
-    types.Text(s) -> dynamic.string(s)
-    types.Blob(bits) -> dynamic.bit_array(bits)
+    types.Null -> Ok(dynamic.nil())
+    types.Boolean(b) -> Ok(dynamic.bool(b))
+    types.TinyInt(i) -> Ok(dynamic.int(i))
+    types.SmallInt(i) -> Ok(dynamic.int(i))
+    types.Integer(i) -> Ok(dynamic.int(i))
+    types.BigInt(i) -> Ok(dynamic.int(i))
+    types.Float(f) -> Ok(dynamic.float(f))
+    types.Double(f) -> Ok(dynamic.float(f))
+    types.Text(s) -> Ok(dynamic.string(s))
+    types.Blob(bits) -> Ok(dynamic.bit_array(bits))
     // Complex types not yet supported as parameters
     types.Timestamp(_)
     | types.Date(_)
     | types.Time(_)
     | types.Interval(_)
     | types.List(_)
-    | types.Struct(_) -> dynamic.nil()
+    | types.Struct(_) ->
+      Error(error.UnsupportedParameterType(
+        "Timestamp, Date, Time, Interval, List, and Struct types cannot be used as query parameters",
+      ))
   }
 }
 

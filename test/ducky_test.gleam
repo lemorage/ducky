@@ -603,3 +603,73 @@ pub fn query_list_in_struct_test() {
     _ -> panic as "Expected List in struct"
   }
 }
+
+pub fn query_params_timestamp_unsupported_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE events (id INT, ts TIMESTAMP)")
+
+  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+    types.Integer(1),
+    types.Timestamp(1_705_315_845),
+  ])
+  |> should.be_error
+}
+
+pub fn query_params_date_unsupported_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE events (id INT, d DATE)")
+
+  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+    types.Integer(1),
+    types.Date(19_738),
+  ])
+  |> should.be_error
+}
+
+pub fn query_params_time_unsupported_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE events (id INT, t TIME)")
+
+  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+    types.Integer(1),
+    types.Time(52_245_000_000),
+  ])
+  |> should.be_error
+}
+
+pub fn query_params_interval_unsupported_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE events (id INT, duration INTERVAL)")
+
+  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+    types.Integer(1),
+    types.Interval(86_400_000_000_000),
+  ])
+  |> should.be_error
+}
+
+pub fn query_params_list_unsupported_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE data (id INT, items INT[])")
+
+  ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
+    types.Integer(1),
+    types.List([types.Integer(1), types.Integer(2)]),
+  ])
+  |> should.be_error
+}
+
+pub fn query_params_struct_unsupported_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE data (id INT, metadata STRUCT(x INT))")
+
+  ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
+    types.Integer(1),
+    types.Struct(dict.from_list([#("x", types.Integer(10))])),
+  ])
+  |> should.be_error
+}
