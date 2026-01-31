@@ -805,3 +805,76 @@ pub fn query_enum_in_table_test() {
   p2
   |> should.equal("high")
 }
+
+pub fn query_array_simple_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  // DuckDB fixed-size array
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT [1, 2, 3]::INTEGER[3] as arr")
+
+  let assert [types.Row([types.Array(elements)])] = result.rows
+  list.length(elements)
+  |> should.equal(3)
+
+  let assert [types.Integer(a), types.Integer(b), types.Integer(c)] = elements
+  a |> should.equal(1)
+  b |> should.equal(2)
+  c |> should.equal(3)
+}
+
+pub fn query_array_strings_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT ['a', 'b']::VARCHAR[2] as arr")
+
+  let assert [types.Row([types.Array(elements)])] = result.rows
+  let assert [types.Text(a), types.Text(b)] = elements
+  a |> should.equal("a")
+  b |> should.equal("b")
+}
+
+pub fn query_map_simple_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT MAP {'key1': 'value1', 'key2': 'value2'} as m")
+
+  let assert [types.Row([types.Map(entries)])] = result.rows
+
+  let assert Ok(types.Text(v1)) = dict.get(entries, "key1")
+  let assert Ok(types.Text(v2)) = dict.get(entries, "key2")
+
+  v1 |> should.equal("value1")
+  v2 |> should.equal("value2")
+}
+
+pub fn query_map_int_values_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT MAP {'x': 10, 'y': 20} as coords")
+
+  let assert [types.Row([types.Map(entries)])] = result.rows
+
+  let assert Ok(types.Integer(x)) = dict.get(entries, "x")
+  let assert Ok(types.Integer(y)) = dict.get(entries, "y")
+
+  x |> should.equal(10)
+  y |> should.equal(20)
+}
+
+pub fn query_map_in_table_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE config (settings MAP(VARCHAR, VARCHAR))")
+  let assert Ok(_) =
+    ducky.query(conn, "INSERT INTO config VALUES (MAP {'theme': 'dark'})")
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM config")
+
+  let assert [types.Row([types.Map(entries)])] = result.rows
+  let assert Ok(types.Text(theme)) = dict.get(entries, "theme")
+  theme |> should.equal("dark")
+}

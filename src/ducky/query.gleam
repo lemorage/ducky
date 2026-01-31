@@ -125,24 +125,81 @@ fn decode_struct(dyn: dynamic.Dynamic) -> Value {
   |> result.unwrap(or: types.Null)
 }
 
-/// Decodes tagged tuples sent as Erlang arrays for temporal and decimal types.
+/// Decodes tagged tuples sent as Erlang arrays for various types.
 fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Value {
-  // First try decimal (tag + string)
-  let decimal_decoder = {
+  let tag_decoder = {
     use tag_dynamic <- decode.subfield([0], decode.dynamic)
-    use value <- decode.subfield([1], decode.string)
-
-    let tag = case dynamic.classify(tag_dynamic) {
-      "Atom" -> atom_to_string(tag_dynamic)
-      _ -> ""
-    }
-
-    decode.success(#(tag, value))
+    decode.success(tag_dynamic)
   }
 
-  case decode.run(dyn, decimal_decoder) {
-    Ok(#("decimal", value)) -> types.Decimal(value)
-    _ -> decode_temporal_tuple(dyn)
+  case decode.run(dyn, tag_decoder) {
+    Ok(tag_dynamic) -> {
+      let tag = case dynamic.classify(tag_dynamic) {
+        "Atom" -> atom_to_string(tag_dynamic)
+        _ -> ""
+      }
+
+      case tag {
+        "decimal" -> decode_decimal_value(dyn)
+        "array" -> decode_array_value(dyn)
+        "map" -> decode_map_value(dyn)
+        "timestamp" | "date" | "time" | "interval" -> decode_temporal_tuple(dyn)
+        _ -> types.Null
+      }
+    }
+    Error(_) -> types.Null
+  }
+}
+
+/// Decodes a decimal tagged tuple {decimal, "string"}.
+fn decode_decimal_value(dyn: dynamic.Dynamic) -> Value {
+  let decoder = {
+    use value <- decode.subfield([1], decode.string)
+    decode.success(value)
+  }
+  case decode.run(dyn, decoder) {
+    Ok(value) -> types.Decimal(value)
+    Error(_) -> types.Null
+  }
+}
+
+/// Decodes an array tagged tuple {array, [elements]}.
+fn decode_array_value(dyn: dynamic.Dynamic) -> Value {
+  let decoder = {
+    use elements <- decode.subfield([1], decode.list(decode.dynamic))
+    decode.success(elements)
+  }
+  case decode.run(dyn, decoder) {
+    Ok(elements) -> {
+      let decoded_elements = list.map(elements, decode_value)
+      types.Array(decoded_elements)
+    }
+    Error(_) -> types.Null
+  }
+}
+
+/// Decodes a map tagged tuple {map, %{key => value}}.
+fn decode_map_value(dyn: dynamic.Dynamic) -> Value {
+  let decoder = {
+    use entries <- decode.subfield(
+      [1],
+      decode.dict(decode.string, decode.dynamic),
+    )
+    decode.success(entries)
+  }
+  case decode.run(dyn, decoder) {
+    Ok(entries) -> {
+      let decoded_entries =
+        entries
+        |> dict.to_list
+        |> list.map(fn(pair) {
+          let #(key, val) = pair
+          #(key, decode_value(val))
+        })
+        |> dict.from_list
+      types.Map(decoded_entries)
+    }
+    Error(_) -> types.Null
   }
 }
 
@@ -200,9 +257,11 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     | types.Time(_)
     | types.Interval(_)
     | types.List(_)
+    | types.Array(_)
+    | types.Map(_)
     | types.Struct(_) ->
       Error(error.UnsupportedParameterType(
-        "Decimal, Timestamp, Date, Time, Interval, List, and Struct types cannot be used as query parameters",
+        "Decimal, Timestamp, Date, Time, Interval, List, Array, Map, and Struct types cannot be used as query parameters",
       ))
   }
 }

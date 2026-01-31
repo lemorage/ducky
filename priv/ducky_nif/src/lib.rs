@@ -32,6 +32,8 @@ mod atoms {
         date,
         time,
         interval,
+        array,
+        map,
     }
 }
 
@@ -251,12 +253,8 @@ fn value_to_term<'a, 'b>(env: Env<'a>, value: ValueRef<'b>) -> NifResult<Term<'a
             Some(s) => Ok(s.encode(env)),
             None => Ok(atoms::null().encode(env)),
         },
-        ValueRef::Array(_array, _row_idx) => Err(rustler::Error::Term(Box::new(
-            "DuckDB ARRAY type not yet supported",
-        ))),
-        ValueRef::Map(_map_array, _row_idx) => Err(rustler::Error::Term(Box::new(
-            "DuckDB MAP type not yet supported",
-        ))),
+        ValueRef::Array(array, row_idx) => encode_array(env, array, row_idx),
+        ValueRef::Map(map_array, row_idx) => encode_map(env, map_array, row_idx),
         ValueRef::Union(_union_ref, _row_idx) => Err(rustler::Error::Term(Box::new(
             "DuckDB UNION type not yet supported",
         ))),
@@ -465,6 +463,103 @@ fn encode_enum(enum_type: duckdb::types::EnumType<'_>, i: usize) -> Option<Strin
             Some(a.values().as_string::<i32>().value(a.key(i)? as _).into())
         }
         _ => None,
+    }
+}
+
+/// Encodes a DuckDB fixed-size array as an Erlang tagged tuple {array, [elements]}.
+fn encode_array<'a>(
+    env: Env<'a>,
+    array: &duckdb::arrow::array::FixedSizeListArray,
+    row_idx: usize,
+) -> NifResult<Term<'a>> {
+    use duckdb::arrow::array::Array;
+
+    if array.is_null(row_idx) {
+        return Ok(atoms::null().encode(env));
+    }
+
+    let values = array.value(row_idx);
+    let mut elements = Vec::new();
+
+    for elem_idx in 0..values.len() {
+        if values.is_null(elem_idx) {
+            elements.push(atoms::null().encode(env));
+        } else {
+            let value_ref = arrow_element_to_value_ref(values.as_ref(), elem_idx)
+                .map_err(|e| rustler::Error::Term(Box::new(e)))?;
+            let term = value_to_term(env, value_ref)?;
+            elements.push(term);
+        }
+    }
+
+    Ok((atoms::array(), elements).encode(env))
+}
+
+/// Encodes a DuckDB map as an Erlang tagged tuple {map, %{key => value}}.
+fn encode_map<'a>(
+    env: Env<'a>,
+    map_array: &duckdb::arrow::array::MapArray,
+    row_idx: usize,
+) -> NifResult<Term<'a>> {
+    use duckdb::arrow::array::Array;
+    use rustler::types::map::map_new;
+
+    if map_array.is_null(row_idx) {
+        return Ok(atoms::null().encode(env));
+    }
+
+    let keys = map_array.keys();
+    let values = map_array.values();
+    let offsets = map_array.value_offsets();
+    let start = offsets[row_idx] as usize;
+    let end = offsets[row_idx + 1] as usize;
+
+    let mut result_map = map_new(env);
+
+    for idx in start..end {
+        // Get key as string
+        let key_str = if keys.is_null(idx) {
+            "null".to_string()
+        } else {
+            let key_ref = arrow_element_to_value_ref(keys.as_ref(), idx)
+                .map_err(|e| rustler::Error::Term(Box::new(e)))?;
+            value_to_string(key_ref)
+        };
+
+        // Get value
+        let value_term = if values.is_null(idx) {
+            atoms::null().encode(env)
+        } else {
+            let value_ref = arrow_element_to_value_ref(values.as_ref(), idx)
+                .map_err(|e| rustler::Error::Term(Box::new(e)))?;
+            value_to_term(env, value_ref)?
+        };
+
+        result_map = result_map.map_put(key_str.encode(env), value_term)?;
+    }
+
+    Ok((atoms::map(), result_map).encode(env))
+}
+
+/// Converts a ValueRef to a string representation (for map keys).
+fn value_to_string(value: ValueRef<'_>) -> String {
+    match value {
+        ValueRef::Null => "null".to_string(),
+        ValueRef::Boolean(b) => b.to_string(),
+        ValueRef::TinyInt(i) => i.to_string(),
+        ValueRef::SmallInt(i) => i.to_string(),
+        ValueRef::Int(i) => i.to_string(),
+        ValueRef::BigInt(i) => i.to_string(),
+        ValueRef::HugeInt(i) => i.to_string(),
+        ValueRef::UTinyInt(i) => i.to_string(),
+        ValueRef::USmallInt(i) => i.to_string(),
+        ValueRef::UInt(i) => i.to_string(),
+        ValueRef::UBigInt(i) => i.to_string(),
+        ValueRef::Float(f) => f.to_string(),
+        ValueRef::Double(f) => f.to_string(),
+        ValueRef::Decimal(d) => d.to_string(),
+        ValueRef::Text(s) => std::str::from_utf8(s).unwrap_or("").to_string(),
+        _ => format!("{:?}", value),
     }
 }
 

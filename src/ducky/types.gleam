@@ -21,6 +21,8 @@ pub type Value {
   Time(Int)
   Interval(Int)
   List(List(Value))
+  Array(List(Value))
+  Map(Dict(String, Value))
   Struct(Dict(String, Value))
 }
 
