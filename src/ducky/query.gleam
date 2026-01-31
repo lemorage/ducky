@@ -74,7 +74,7 @@ fn decode_value(dyn: dynamic.Dynamic) -> Value {
     "Atom" -> types.Null
     "Dict" -> decode_struct(dyn)
     "List" -> decode_list(dyn)
-    "Array" -> decode_temporal_array(dyn)
+    "Array" -> decode_tagged_tuple(dyn)
     _ -> {
       let value_decoder =
         decode.one_of(decode.bool |> decode.map(types.Boolean), or: [
@@ -125,13 +125,33 @@ fn decode_struct(dyn: dynamic.Dynamic) -> Value {
   |> result.unwrap(or: types.Null)
 }
 
-/// Decodes tagged tuples sent as Erlang arrays for temporal types.
-fn decode_temporal_array(dyn: dynamic.Dynamic) -> Value {
+/// Decodes tagged tuples sent as Erlang arrays for temporal and decimal types.
+fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Value {
+  // First try decimal (tag + string)
+  let decimal_decoder = {
+    use tag_dynamic <- decode.subfield([0], decode.dynamic)
+    use value <- decode.subfield([1], decode.string)
+
+    let tag = case dynamic.classify(tag_dynamic) {
+      "Atom" -> atom_to_string(tag_dynamic)
+      _ -> ""
+    }
+
+    decode.success(#(tag, value))
+  }
+
+  case decode.run(dyn, decimal_decoder) {
+    Ok(#("decimal", value)) -> types.Decimal(value)
+    _ -> decode_temporal_tuple(dyn)
+  }
+}
+
+/// Decodes temporal tagged tuples (timestamp, date, time, interval).
+fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Value {
   let decoder = {
     use tag_dynamic <- decode.subfield([0], decode.dynamic)
     use value <- decode.subfield([1], decode.int)
 
-    // Convert atom tag to string
     let tag = case dynamic.classify(tag_dynamic) {
       "Atom" -> atom_to_string(tag_dynamic)
       "String" ->
@@ -174,14 +194,15 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     types.Text(s) -> Ok(dynamic.string(s))
     types.Blob(bits) -> Ok(dynamic.bit_array(bits))
     // Complex types not yet supported as parameters
-    types.Timestamp(_)
+    types.Decimal(_)
+    | types.Timestamp(_)
     | types.Date(_)
     | types.Time(_)
     | types.Interval(_)
     | types.List(_)
     | types.Struct(_) ->
       Error(error.UnsupportedParameterType(
-        "Timestamp, Date, Time, Interval, List, and Struct types cannot be used as query parameters",
+        "Decimal, Timestamp, Date, Time, Interval, List, and Struct types cannot be used as query parameters",
       ))
   }
 }

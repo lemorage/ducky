@@ -741,3 +741,67 @@ pub fn error_unsupported_param_type_test() {
     _ -> panic as "Expected UnsupportedParameterType error"
   }
 }
+
+pub fn query_decimal_preserves_precision_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT 123456789.123456789::DECIMAL(18,9) as d")
+
+  let assert [types.Row([types.Decimal(value)])] = result.rows
+  value
+  |> should.equal("123456789.123456789")
+}
+
+pub fn query_decimal_negative_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) = ducky.query(conn, "SELECT -99.99::DECIMAL(5,2) as d")
+
+  let assert [types.Row([types.Decimal(value)])] = result.rows
+  string.contains(value, "99.99")
+  |> should.be_true
+}
+
+pub fn query_decimal_in_table_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE prices (amount DECIMAL(10,2))")
+  let assert Ok(_) = ducky.query(conn, "INSERT INTO prices VALUES (1234.56)")
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM prices")
+
+  let assert [types.Row([types.Decimal(value)])] = result.rows
+  value
+  |> should.equal("1234.56")
+}
+
+pub fn query_enum_returns_text_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TYPE status AS ENUM ('pending', 'done')")
+
+  let assert Ok(result) = ducky.query(conn, "SELECT 'pending'::status as s")
+
+  let assert [types.Row([types.Text(value)])] = result.rows
+  value
+  |> should.equal("pending")
+}
+
+pub fn query_enum_in_table_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TYPE priority AS ENUM ('low', 'medium', 'high')")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE tasks (p priority)")
+  let assert Ok(_) =
+    ducky.query(conn, "INSERT INTO tasks VALUES ('high'), ('low')")
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM tasks ORDER BY p")
+
+  let assert [types.Row([types.Text(p1)]), types.Row([types.Text(p2)])] =
+    result.rows
+  p1
+  |> should.equal("low")
+  p2
+  |> should.equal("high")
+}

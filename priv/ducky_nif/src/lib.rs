@@ -25,6 +25,7 @@ mod atoms {
         integer,
         float,
         double,
+        decimal,
         text,
         blob,
         timestamp,
@@ -245,13 +246,20 @@ fn value_to_term<'a, 'b>(env: Env<'a>, value: ValueRef<'b>) -> NifResult<Term<'a
         }
         ValueRef::Struct(struct_array, idx) => encode_struct(env, struct_array, idx),
         ValueRef::List(list_type, row_idx) => encode_list(env, list_type, row_idx),
+        ValueRef::Decimal(dec) => Ok((atoms::decimal(), dec.to_string()).encode(env)),
+        ValueRef::Enum(enum_type, row_idx) => match encode_enum(enum_type, row_idx) {
+            Some(s) => Ok(s.encode(env)),
+            None => Ok(atoms::null().encode(env)),
+        },
         ValueRef::Array(_array, _row_idx) => Err(rustler::Error::Term(Box::new(
             "DuckDB ARRAY type not yet supported",
         ))),
-        other => {
-            let type_name = format!("Unsupported ValueRef variant: {:?}", other);
-            Err(rustler::Error::Term(Box::new(type_name)))
-        }
+        ValueRef::Map(_map_array, _row_idx) => Err(rustler::Error::Term(Box::new(
+            "DuckDB MAP type not yet supported",
+        ))),
+        ValueRef::Union(_union_ref, _row_idx) => Err(rustler::Error::Term(Box::new(
+            "DuckDB UNION type not yet supported",
+        ))),
     }
 }
 
@@ -439,6 +447,25 @@ fn encode_struct<'a>(
     }
 
     Ok(map)
+}
+
+/// Encodes a DuckDB enum value as a String.
+fn encode_enum(enum_type: duckdb::types::EnumType<'_>, i: usize) -> Option<String> {
+    use duckdb::arrow::array::AsArray;
+    use duckdb::types::EnumType::*;
+
+    match enum_type {
+        UInt8(a) if !a.is_null(i) => {
+            Some(a.values().as_string::<i32>().value(a.key(i)? as _).into())
+        }
+        UInt16(a) if !a.is_null(i) => {
+            Some(a.values().as_string::<i32>().value(a.key(i)? as _).into())
+        }
+        UInt32(a) if !a.is_null(i) => {
+            Some(a.values().as_string::<i32>().value(a.key(i)? as _).into())
+        }
+        _ => None,
+    }
 }
 
 /// Core statement execution logic for all queries.

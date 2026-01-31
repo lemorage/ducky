@@ -13,6 +13,7 @@ pub type Value {
   BigInt(Int)
   Float(Float)
   Double(Float)
+  Decimal(String)
   Text(String)
   Blob(BitArray)
   Timestamp(Int)
