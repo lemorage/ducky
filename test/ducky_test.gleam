@@ -1,9 +1,11 @@
 import ducky
+import ducky/error
 import ducky/types
 import gleam/dict
 import gleam/list
 import gleam/option
 import gleam/result
+import gleam/string
 import gleeunit
 import gleeunit/should
 
@@ -672,4 +674,70 @@ pub fn query_params_struct_unsupported_test() {
     types.Struct(dict.from_list([#("x", types.Integer(10))])),
   ])
   |> should.be_error
+}
+
+pub fn error_connection_failed_type_test() {
+  let result = ducky.connect("")
+
+  case result {
+    Error(error.ConnectionFailed(_)) -> True
+    _ -> False
+  }
+  |> should.be_true
+}
+
+pub fn error_connection_failed_clean_message_test() {
+  let result = ducky.connect("")
+
+  case result {
+    Error(error.ConnectionFailed(msg)) -> {
+      string.contains(msg, "#(")
+      |> should.be_false
+    }
+    _ -> panic as "Expected ConnectionFailed error"
+  }
+}
+
+pub fn error_query_syntax_type_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let result = ducky.query(conn, "SELEKT * FROM nonexistent")
+
+  case result {
+    Error(error.QuerySyntaxError(_)) -> True
+    Error(error.DatabaseError(_)) -> True
+    _ -> False
+  }
+  |> should.be_true
+}
+
+pub fn error_query_syntax_clean_message_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let result = ducky.query(conn, "SELEKT * FROM nonexistent")
+
+  case result {
+    Error(error.QuerySyntaxError(msg)) -> {
+      string.contains(msg, "#(")
+      |> should.be_false
+    }
+    Error(error.DatabaseError(msg)) -> {
+      string.contains(msg, "#(")
+      |> should.be_false
+    }
+    _ -> panic as "Expected QuerySyntaxError or DatabaseError"
+  }
+}
+
+pub fn error_unsupported_param_type_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let result =
+    ducky.query_params(conn, "SELECT ?", [types.Timestamp(1_705_315_845)])
+
+  case result {
+    Error(error.UnsupportedParameterType(msg)) -> {
+      // Message should describe the unsupported types
+      string.contains(msg, "Timestamp")
+      |> should.be_true
+    }
+    _ -> panic as "Expected UnsupportedParameterType error"
+  }
 }

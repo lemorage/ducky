@@ -14,13 +14,17 @@ import gleam/result
 /// Executes a SQL query and returns structured results.
 ///
 /// The query runs on a dirty scheduler to avoid blocking the BEAM.
-/// Large result sets are streamed to prevent memory exhaustion.
+/// Results are loaded into memory. For large datasets, use LIMIT/OFFSET
+/// or filter in SQL to reduce memory usage.
 ///
 /// ## Examples
 ///
 /// ```gleam
 /// query(conn, "SELECT id, name FROM users WHERE active = true")
 /// // => Ok(DataFrame(columns: ["id", "name"], rows: [...]))
+///
+/// // For large datasets, paginate:
+/// query(conn, "SELECT * FROM users LIMIT 1000 OFFSET 0")
 /// ```
 pub fn query(conn: Connection, sql: String) -> Result(DataFrame, Error) {
   ffi.execute_query(connection.native(conn), sql, [])

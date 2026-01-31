@@ -13,6 +13,7 @@ mod atoms {
         // Error atoms
         connection_failed,
         query_syntax_error,
+        unsupported_parameter_type,
         database_error,
         nil,
         // Type atoms
@@ -38,6 +39,7 @@ mod atoms {
 pub enum DuckyError {
     ConnectionFailed(String),
     QuerySyntaxError(String),
+    UnsupportedParameterType(String),
     DatabaseError(String),
 }
 
@@ -49,6 +51,9 @@ impl Encoder for DuckyError {
             }
             DuckyError::QuerySyntaxError(msg) => {
                 (atoms::query_syntax_error(), msg.as_str()).encode(env)
+            }
+            DuckyError::UnsupportedParameterType(msg) => {
+                (atoms::unsupported_parameter_type(), msg.as_str()).encode(env)
             }
             DuckyError::DatabaseError(msg) => (atoms::database_error(), msg.as_str()).encode(env),
         };
@@ -516,8 +521,8 @@ fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, Duc
         return Ok(Box::new(s));
     }
 
-    Err(DuckyError::DatabaseError(
-        "Unsupported parameter type: cannot convert term to DuckDB parameter".to_string(),
+    Err(DuckyError::UnsupportedParameterType(
+        "Cannot convert term to DuckDB parameter".to_string(),
     ))
 }
 
