@@ -774,16 +774,37 @@ pub fn error_query_syntax_clean_message_test() {
 
 pub fn error_unsupported_param_type_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
-  let result = ducky.query_params(conn, "SELECT ?", [types.Decimal("123.45")])
+  let result =
+    ducky.query_params(conn, "SELECT ?", [
+      types.List([types.Integer(1), types.Integer(2)]),
+    ])
 
   case result {
     Error(error.UnsupportedParameterType(msg)) -> {
       // Message should describe the unsupported types
-      string.contains(msg, "Decimal")
+      string.contains(msg, "List")
       |> should.be_true
     }
     _ -> panic as "Expected UnsupportedParameterType error"
   }
+}
+
+pub fn query_params_decimal_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE prices (id INT, amount DECIMAL(10,2))")
+
+  let amount = "1234.56"
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO prices VALUES (?, ?)", [
+      types.Integer(1),
+      types.Decimal(amount),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT amount FROM prices")
+  let assert [types.Row([types.Decimal(returned_amount)])] = result.rows
+  returned_amount
+  |> should.equal(amount)
 }
 
 pub fn query_decimal_preserves_precision_test() {

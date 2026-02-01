@@ -294,14 +294,12 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     types.Time(micros) -> Ok(make_tagged("time", dynamic.int(micros)))
     types.Interval(months, days, nanos) ->
       Ok(make_interval_tuple(months, days, nanos))
+    // Decimal as tagged tuple {decimal, "string"}
+    types.Decimal(s) -> Ok(make_tagged("decimal", dynamic.string(s)))
     // Complex types not yet supported as parameters
-    types.Decimal(_)
-    | types.List(_)
-    | types.Array(_)
-    | types.Map(_)
-    | types.Struct(_) ->
+    types.List(_) | types.Array(_) | types.Map(_) | types.Struct(_) ->
       Error(error.UnsupportedParameterType(
-        "Decimal, List, Array, Map, and Struct types cannot be used as query parameters",
+        "List, Array, Map, and Struct types cannot be used as query parameters",
       ))
   }
 }

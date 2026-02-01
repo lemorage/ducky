@@ -678,7 +678,7 @@ fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, Duc
         }
     }
 
-    // Check for tagged tuples {atom, value} for temporal types
+    // Check for tagged tuples {atom, value} for temporal and decimal types
     if let Ok((tag_term, value_term)) = term.decode::<(Term, Term)>() {
         if let Ok(tag_atom) = atom::Atom::from_term(tag_term) {
             // Timestamp: {timestamp, micros} -> proper TIMESTAMP binding
@@ -697,6 +697,12 @@ fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, Duc
             if tag_atom == atoms::time() {
                 if let Ok(micros) = value_term.decode::<i64>() {
                     return Ok(Box::new(micros_to_iso_time(micros)));
+                }
+            }
+            // Decimal: {decimal, "string"} -> string (DuckDB casts to DECIMAL)
+            if tag_atom == atoms::decimal() {
+                if let Ok(s) = value_term.decode::<String>() {
+                    return Ok(Box::new(s));
                 }
             }
         }
