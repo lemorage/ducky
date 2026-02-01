@@ -396,13 +396,25 @@ pub fn query_interval_test() {
   let assert [row] = result.rows
   let assert types.Row([pos, neg]) = row
 
+  // '2 days 3 hours' = months: 0, days: 2, nanos: 3 hours in nanos
   case pos {
-    types.Interval(nanos) -> should.be_true(nanos > 0)
+    types.Interval(months, days, nanos) -> {
+      should.equal(months, 0)
+      should.equal(days, 2)
+      // 3 hours = 3 * 60 * 60 * 1_000_000_000 nanos
+      should.equal(nanos, 10_800_000_000_000)
+    }
     _ -> panic as "Expected Interval variant"
   }
 
+  // '-5 hours' = months: 0, days: 0, nanos: -5 hours in nanos
   case neg {
-    types.Interval(nanos) -> should.be_true(nanos < 0)
+    types.Interval(months, days, nanos) -> {
+      should.equal(months, 0)
+      should.equal(days, 0)
+      // -5 hours = -5 * 60 * 60 * 1_000_000_000 nanos
+      should.equal(nanos, -18_000_000_000_000)
+    }
     _ -> panic as "Expected Interval variant"
   }
 }
@@ -661,17 +673,28 @@ pub fn query_params_time_test() {
   |> should.equal(micros)
 }
 
-pub fn query_params_interval_unsupported_test() {
+pub fn query_params_interval_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE events (id INT, duration INTERVAL)")
 
-  // Interval binding not yet supported (complex multi-component type)
-  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-    types.Integer(1),
-    types.Interval(86_400_000_000_000),
-  ])
-  |> should.be_error
+  // Interval with 1 month, 2 days, 3 hours in nanoseconds
+  let months = 1
+  let days = 2
+  let nanos = 10_800_000_000_000
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+      types.Integer(1),
+      types.Interval(months, days, nanos),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT duration FROM events")
+  let assert [types.Row([types.Interval(ret_months, ret_days, ret_nanos)])] =
+    result.rows
+  ret_months |> should.equal(months)
+  ret_days |> should.equal(days)
+  ret_nanos |> should.equal(nanos)
 }
 
 pub fn query_params_list_unsupported_test() {

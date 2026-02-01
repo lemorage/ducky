@@ -250,14 +250,7 @@ fn value_to_term<'a, 'b>(env: Env<'a>, value: ValueRef<'b>) -> NifResult<Term<'a
             months,
             days,
             nanos,
-        } => {
-            // Convert to total nanoseconds (approximate for months)
-            // 1 month ≈ 30 days
-            let month_nanos = (months as i64) * 30 * 24 * 60 * 60 * 1_000_000_000;
-            let day_nanos = (days as i64) * 24 * 60 * 60 * 1_000_000_000;
-            let total_nanos = month_nanos + day_nanos + nanos;
-            Ok((atoms::interval(), total_nanos).encode(env))
-        }
+        } => Ok((atoms::interval(), months, days, nanos).encode(env)),
         ValueRef::Struct(struct_array, idx) => encode_struct(env, struct_array, idx),
         ValueRef::List(list_type, row_idx) => encode_list(env, list_type, row_idx),
         ValueRef::Decimal(dec) => Ok((atoms::decimal(), dec.to_string()).encode(env)),
@@ -664,6 +657,27 @@ fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, Duc
         }
     }
 
+    // Check for Interval 4-tuple {interval, months, days, nanos}
+    if let Ok((tag_term, months_term, days_term, nanos_term)) =
+        term.decode::<(Term, Term, Term, Term)>()
+    {
+        if let Ok(tag_atom) = atom::Atom::from_term(tag_term) {
+            if tag_atom == atoms::interval() {
+                if let (Ok(months), Ok(days), Ok(nanos)) = (
+                    months_term.decode::<i32>(),
+                    days_term.decode::<i32>(),
+                    nanos_term.decode::<i64>(),
+                ) {
+                    return Ok(Box::new(Value::Interval {
+                        months,
+                        days,
+                        nanos,
+                    }));
+                }
+            }
+        }
+    }
+
     // Check for tagged tuples {atom, value} for temporal types
     if let Ok((tag_term, value_term)) = term.decode::<(Term, Term)>() {
         if let Ok(tag_atom) = atom::Atom::from_term(tag_term) {
@@ -684,12 +698,6 @@ fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, Duc
                 if let Ok(micros) = value_term.decode::<i64>() {
                     return Ok(Box::new(micros_to_iso_time(micros)));
                 }
-            }
-            // Interval: complex multi-component type, not yet supported
-            if tag_atom == atoms::interval() {
-                return Err(DuckyError::UnsupportedParameterType(
-                    "Interval parameter binding requires special handling".to_string(),
-                ));
             }
         }
     }

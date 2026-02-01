@@ -19,7 +19,7 @@ pub type Value {
   Timestamp(Int)
   Date(Int)
   Time(Int)
-  Interval(Int)
+  Interval(months: Int, days: Int, nanos: Int)
   List(List(Value))
   Array(List(Value))
   Map(Dict(String, Value))

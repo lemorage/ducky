@@ -143,7 +143,8 @@ fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Value {
         "decimal" -> decode_decimal_value(dyn)
         "array" -> decode_array_value(dyn)
         "map" -> decode_map_value(dyn)
-        "timestamp" | "date" | "time" | "interval" -> decode_temporal_tuple(dyn)
+        "timestamp" | "date" | "time" -> decode_temporal_tuple(dyn)
+        "interval" -> decode_interval_tuple(dyn)
         _ -> types.Null
       }
     }
@@ -203,7 +204,7 @@ fn decode_map_value(dyn: dynamic.Dynamic) -> Value {
   }
 }
 
-/// Decodes temporal tagged tuples (timestamp, date, time, interval).
+/// Decodes temporal tagged tuples (timestamp, date, time).
 fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Value {
   let decoder = {
     use tag_dynamic <- decode.subfield([0], decode.dynamic)
@@ -226,9 +227,23 @@ fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Value {
         "timestamp" -> types.Timestamp(value)
         "date" -> types.Date(value)
         "time" -> types.Time(value)
-        "interval" -> types.Interval(value)
         _ -> types.Null
       }
+    Error(_) -> types.Null
+  }
+}
+
+/// Decodes interval 4-tuple {interval, months, days, nanos}.
+fn decode_interval_tuple(dyn: dynamic.Dynamic) -> Value {
+  let decoder = {
+    use months <- decode.subfield([1], decode.int)
+    use days <- decode.subfield([2], decode.int)
+    use nanos <- decode.subfield([3], decode.int)
+    decode.success(#(months, days, nanos))
+  }
+
+  case decode.run(dyn, decoder) {
+    Ok(#(months, days, nanos)) -> types.Interval(months, days, nanos)
     Error(_) -> types.Null
   }
 }
@@ -250,6 +265,16 @@ fn make_tagged(tag: String, value: dynamic.Dynamic) -> dynamic.Dynamic {
   list_to_tuple([binary_to_atom(tag), value])
 }
 
+/// Creates an interval 4-tuple {interval, months, days, nanos}.
+fn make_interval_tuple(months: Int, days: Int, nanos: Int) -> dynamic.Dynamic {
+  list_to_tuple([
+    binary_to_atom("interval"),
+    dynamic.int(months),
+    dynamic.int(days),
+    dynamic.int(nanos),
+  ])
+}
+
 /// Converts a Value to a Dynamic for passing to the NIF.
 fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
   case value {
@@ -267,7 +292,8 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     types.Timestamp(micros) -> Ok(make_tagged("timestamp", dynamic.int(micros)))
     types.Date(days) -> Ok(make_tagged("date", dynamic.int(days)))
     types.Time(micros) -> Ok(make_tagged("time", dynamic.int(micros)))
-    types.Interval(nanos) -> Ok(make_tagged("interval", dynamic.int(nanos)))
+    types.Interval(months, days, nanos) ->
+      Ok(make_interval_tuple(months, days, nanos))
     // Complex types not yet supported as parameters
     types.Decimal(_)
     | types.List(_)
