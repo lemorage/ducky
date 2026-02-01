@@ -606,38 +606,59 @@ pub fn query_list_in_struct_test() {
   }
 }
 
-pub fn query_params_timestamp_unsupported_test() {
+pub fn query_params_timestamp_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE events (id INT, ts TIMESTAMP)")
 
-  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-    types.Integer(1),
-    types.Timestamp(1_705_315_845),
-  ])
-  |> should.be_error
+  // Microseconds since epoch: 2024-01-15 10:30:45 UTC
+  let micros = 1_705_315_845_000_000
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+      types.Integer(1),
+      types.Timestamp(micros),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT ts FROM events")
+  let assert [types.Row([types.Timestamp(returned_micros)])] = result.rows
+  returned_micros
+  |> should.equal(micros)
 }
 
-pub fn query_params_date_unsupported_test() {
+pub fn query_params_date_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(_) = ducky.query(conn, "CREATE TABLE events (id INT, d DATE)")
 
-  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-    types.Integer(1),
-    types.Date(19_738),
-  ])
-  |> should.be_error
+  // Days since epoch: 2024-01-15
+  let days = 19_738
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+      types.Integer(1),
+      types.Date(days),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT d FROM events")
+  let assert [types.Row([types.Date(returned_days)])] = result.rows
+  returned_days
+  |> should.equal(days)
 }
 
-pub fn query_params_time_unsupported_test() {
+pub fn query_params_time_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(_) = ducky.query(conn, "CREATE TABLE events (id INT, t TIME)")
 
-  ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-    types.Integer(1),
-    types.Time(52_245_000_000),
-  ])
-  |> should.be_error
+  // Microseconds since midnight: 14:30:45
+  let micros = 52_245_000_000
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
+      types.Integer(1),
+      types.Time(micros),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT t FROM events")
+  let assert [types.Row([types.Time(returned_micros)])] = result.rows
+  returned_micros
+  |> should.equal(micros)
 }
 
 pub fn query_params_interval_unsupported_test() {
@@ -645,6 +666,7 @@ pub fn query_params_interval_unsupported_test() {
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE events (id INT, duration INTERVAL)")
 
+  // Interval binding not yet supported (complex multi-component type)
   ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
     types.Integer(1),
     types.Interval(86_400_000_000_000),
@@ -729,13 +751,12 @@ pub fn error_query_syntax_clean_message_test() {
 
 pub fn error_unsupported_param_type_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
-  let result =
-    ducky.query_params(conn, "SELECT ?", [types.Timestamp(1_705_315_845)])
+  let result = ducky.query_params(conn, "SELECT ?", [types.Decimal("123.45")])
 
   case result {
     Error(error.UnsupportedParameterType(msg)) -> {
       // Message should describe the unsupported types
-      string.contains(msg, "Timestamp")
+      string.contains(msg, "Decimal")
       |> should.be_true
     }
     _ -> panic as "Expected UnsupportedParameterType error"

@@ -237,6 +237,19 @@ fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Value {
 @external(erlang, "erlang", "atom_to_binary")
 fn atom_to_string(atom: dynamic.Dynamic) -> String
 
+/// Creates an atom from a string.
+@external(erlang, "erlang", "binary_to_atom")
+fn binary_to_atom(s: String) -> dynamic.Dynamic
+
+/// Converts a list to a tuple.
+@external(erlang, "erlang", "list_to_tuple")
+fn list_to_tuple(list: List(dynamic.Dynamic)) -> dynamic.Dynamic
+
+/// Creates a tagged tuple {tag, value} for NIF parameter encoding.
+fn make_tagged(tag: String, value: dynamic.Dynamic) -> dynamic.Dynamic {
+  list_to_tuple([binary_to_atom(tag), value])
+}
+
 /// Converts a Value to a Dynamic for passing to the NIF.
 fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
   case value {
@@ -250,18 +263,19 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     types.Double(f) -> Ok(dynamic.float(f))
     types.Text(s) -> Ok(dynamic.string(s))
     types.Blob(bits) -> Ok(dynamic.bit_array(bits))
+    // Temporal types as tagged tuples {atom, int}
+    types.Timestamp(micros) -> Ok(make_tagged("timestamp", dynamic.int(micros)))
+    types.Date(days) -> Ok(make_tagged("date", dynamic.int(days)))
+    types.Time(micros) -> Ok(make_tagged("time", dynamic.int(micros)))
+    types.Interval(nanos) -> Ok(make_tagged("interval", dynamic.int(nanos)))
     // Complex types not yet supported as parameters
     types.Decimal(_)
-    | types.Timestamp(_)
-    | types.Date(_)
-    | types.Time(_)
-    | types.Interval(_)
     | types.List(_)
     | types.Array(_)
     | types.Map(_)
     | types.Struct(_) ->
       Error(error.UnsupportedParameterType(
-        "Decimal, Timestamp, Date, Time, Interval, List, Array, Map, and Struct types cannot be used as query parameters",
+        "Decimal, List, Array, Map, and Struct types cannot be used as query parameters",
       ))
   }
 }

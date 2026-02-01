@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 rustler = "0.37.0"
 duckdb = { version = "1.4.3", features = ["bundled"] }
+chrono = "0.4.42"
 
 [profile.release]
 lto = "fat"

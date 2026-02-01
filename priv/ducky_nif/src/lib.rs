@@ -2,9 +2,21 @@
 //!
 //! Provides native bindings to DuckDB through Rustler.
 
-use duckdb::{Connection as DuckDBConnection, arrow::array::Array, types::ValueRef};
+use chrono::{NaiveDate, NaiveTime, Timelike};
+use duckdb::{
+    Connection as DuckDBConnection,
+    arrow::array::Array,
+    types::{TimeUnit, Value, ValueRef},
+};
 use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
 use std::sync::Mutex;
+
+/// Microseconds per second.
+const MICROS_PER_SEC: i64 = 1_000_000;
+/// Microseconds per day (24 hours).
+const MICROS_PER_DAY: i64 = 86_400_000_000;
+/// Days from year 0 (CE) to Unix epoch (1970-01-01).
+const DAYS_FROM_CE_TO_UNIX: i32 = 719_163;
 
 mod atoms {
     rustler::atoms! {
@@ -612,18 +624,73 @@ fn execute_statement<'a>(
     }
 }
 
+/// Converts days since Unix epoch to ISO date string (YYYY-MM-DD).
+fn days_to_iso_date(days: i32) -> String {
+    let days_from_ce = days + DAYS_FROM_CE_TO_UNIX;
+    NaiveDate::from_num_days_from_ce_opt(days_from_ce)
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| format!("INVALID_DATE(days={})", days))
+}
+
+/// Converts microseconds since midnight to ISO time string (HH:MM:SS[.ffffff]).
+fn micros_to_iso_time(micros: i64) -> String {
+    // Normalize to valid range [0, MICROS_PER_DAY)
+    let normalized = micros.rem_euclid(MICROS_PER_DAY) as u64;
+    let secs = (normalized / MICROS_PER_SEC as u64) as u32;
+    let nanos = ((normalized % MICROS_PER_SEC as u64) * 1000) as u32;
+
+    NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos)
+        .map(|t| {
+            if t.nanosecond() > 0 {
+                t.format("%H:%M:%S%.6f").to_string()
+            } else {
+                t.format("%H:%M:%S").to_string()
+            }
+        })
+        .unwrap_or_else(|| format!("INVALID_TIME(micros={})", micros))
+}
+
 /// Converts an Erlang term to a DuckDB parameter.
 ///
-/// Supports basic types: Int, Float, String, Bool, Null
+/// Supports: Int, Float, String, Bool, Null, and temporal types via tagged tuples.
 fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, DuckyError> {
     use duckdb::types::Null;
     use rustler::types::atom;
 
-    // Try to decode as different types
     // Check for null/nil atoms first (Gleam's Nil maps to Erlang's nil atom)
     if let Ok(atom_val) = atom::Atom::from_term(term) {
         if atom_val == atoms::null() || atom_val == atoms::nil() {
             return Ok(Box::new(Null));
+        }
+    }
+
+    // Check for tagged tuples {atom, value} for temporal types
+    if let Ok((tag_term, value_term)) = term.decode::<(Term, Term)>() {
+        if let Ok(tag_atom) = atom::Atom::from_term(tag_term) {
+            // Timestamp: {timestamp, micros} -> proper TIMESTAMP binding
+            if tag_atom == atoms::timestamp() {
+                if let Ok(micros) = value_term.decode::<i64>() {
+                    return Ok(Box::new(Value::Timestamp(TimeUnit::Microsecond, micros)));
+                }
+            }
+            // Date: {date, days} -> ISO string (duckdb-rs lacks Date32 statement binding)
+            if tag_atom == atoms::date() {
+                if let Ok(days) = value_term.decode::<i32>() {
+                    return Ok(Box::new(days_to_iso_date(days)));
+                }
+            }
+            // Time: {time, micros} -> ISO string (duckdb-rs lacks Time64 statement binding)
+            if tag_atom == atoms::time() {
+                if let Ok(micros) = value_term.decode::<i64>() {
+                    return Ok(Box::new(micros_to_iso_time(micros)));
+                }
+            }
+            // Interval: complex multi-component type, not yet supported
+            if tag_atom == atoms::interval() {
+                return Err(DuckyError::UnsupportedParameterType(
+                    "Interval parameter binding requires special handling".to_string(),
+                ));
+            }
         }
     }
 
