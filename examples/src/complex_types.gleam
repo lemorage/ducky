@@ -1,4 +1,4 @@
-// Complex types: STRUCT, temporal types, and LIST
+// Complex types: STRUCT, LIST, ARRAY, MAP, DECIMAL, temporal
 
 import ducky
 import gleam/io
@@ -11,140 +11,95 @@ pub fn main() {
   let result = {
     use conn <- result.try(ducky.connect(":memory:"))
 
-    // STRUCT types with field accessor
-    use struct_df <- result.try(ducky.query(
+    // STRUCT with field accessor
+    use structs <- result.try(ducky.query(
       conn,
-      "SELECT
-        {'name': 'Alice', 'age': 30} as person,
-        {'x': 10, 'y': 20} as point",
+      "SELECT {'name': 'Alice', 'age': 30} as person",
     ))
 
-    let points =
-      struct_df.rows
+    let names =
+      structs.rows
       |> list.filter_map(fn(row) {
-        case ducky.get(row, 1) {
-          option.Some(point) ->
-            case ducky.field(point, "x"), ducky.field(point, "y") {
-              option.Some(ducky.Integer(x)), option.Some(ducky.Integer(y)) ->
-                Ok(Point(x, y))
-              _, _ -> Error(Nil)
-            }
-          _ -> Error(Nil)
-        }
-      })
-
-    // Nested STRUCT
-    use nested <- result.try(ducky.query(
-      conn,
-      "SELECT {
-        'user': {'name': 'Bob', 'id': 42},
-        'active': true
-      } as data",
-    ))
-
-    // Temporal types
-    use temporal <- result.try(ducky.query(
-      conn,
-      "SELECT
-        TIMESTAMP '2024-01-15 10:30:45' as ts,
-        DATE '2024-12-25' as date,
-        TIME '14:30:00' as time,
-        INTERVAL '2 days' as duration",
-    ))
-
-    let times =
-      temporal.rows
-      |> list.filter_map(fn(row) {
-        case ducky.get(row, 0), ducky.get(row, 1) {
-          option.Some(ducky.Timestamp(ts)), option.Some(ducky.Date(days)) ->
-            Ok(#(ts, days))
-          _, _ -> Error(Nil)
-        }
-      })
-
-    // LIST types
-    use lists <- result.try(ducky.query(
-      conn,
-      "SELECT
-        [1, 2, 3] as numbers,
-        ['apple', 'banana'] as fruits,
-        [[1, 2], [3, 4]] as matrix",
-    ))
-
-    let matrices =
-      lists.rows
-      |> list.filter_map(fn(row) {
-        case ducky.get(row, 2) {
-          option.Some(ducky.List(outer)) ->
-            case outer {
-              [ducky.List(first), ..] -> Ok(first)
+        case ducky.get(row, 0) {
+          option.Some(person) ->
+            case ducky.field(person, "name") {
+              option.Some(ducky.Text(name)) -> Ok(name)
               _ -> Error(Nil)
             }
           _ -> Error(Nil)
         }
       })
 
-    // Combined: Event with nested data
-    use _ <- result.try(ducky.query(
+    // LIST type
+    use lists <- result.try(ducky.query(
       conn,
-      "CREATE TABLE events (
-        id INT,
-        data STRUCT(
-          name VARCHAR,
-          timestamp TIMESTAMP,
-          attendees VARCHAR[]
-        )
-      )",
+      "SELECT [1, 2, 3] as numbers, [[1, 2], [3, 4]] as matrix",
     ))
 
-    use _ <- result.try(ducky.query(
+    // ARRAY type
+    use arrays <- result.try(ducky.query(
       conn,
-      "INSERT INTO events VALUES (
-        1,
-        {
-          'name': 'Conference',
-          'timestamp': TIMESTAMP '2024-06-15 09:00:00',
-          'attendees': ['Alice', 'Bob', 'Charlie']
-        }
-      )",
+      "SELECT array_value(1, 2, 3) as nums",
     ))
 
-    use events <- result.try(ducky.query(conn, "SELECT * FROM events"))
+    // MAP type
+    use maps <- result.try(ducky.query(
+      conn,
+      "SELECT map {'a': 1, 'b': 2} as lookup",
+    ))
 
-    let parsed =
-      events.rows
-      |> list.filter_map(fn(row) {
-        case ducky.get(row, 1) {
-          option.Some(data) ->
-            case
-              ducky.field(data, "name"),
-              ducky.field(data, "timestamp"),
-              ducky.field(data, "attendees")
-            {
-              option.Some(ducky.Text(name)),
-                option.Some(ducky.Timestamp(ts)),
-                option.Some(ducky.List(attendees))
-              -> Ok(Event(name, ts, attendees))
-              _, _, _ -> Error(Nil)
-            }
-          _ -> Error(Nil)
-        }
-      })
+    // DECIMAL: lossless precision
+    use decimals <- result.try(ducky.query(
+      conn,
+      "SELECT 123.456789012345678901::DECIMAL(30,18) as price",
+    ))
+
+    // Temporal query results
+    use temporals <- result.try(ducky.query(
+      conn,
+      "SELECT
+        TIMESTAMP '2024-01-15 10:30:45' as ts,
+        DATE '2024-12-25' as d,
+        TIME '14:30:00' as t,
+        INTERVAL '2 days' as dur",
+    ))
+
+    // Temporal parameter binding
+    use _ <- result.try(ducky.query(
+      conn,
+      "CREATE TABLE events (id INT, ts TIMESTAMP, d DATE, t TIME, dur INTERVAL)",
+    ))
+
+    use _ <- result.try(
+      ducky.query_params(conn, "INSERT INTO events VALUES (?, ?, ?, ?, ?)", [
+        ducky.Integer(1),
+        ducky.Timestamp(1_704_067_200_000_000),
+        ducky.Date(19_723),
+        ducky.Time(43_200_000_000),
+        ducky.Interval(0, 7, 0),
+      ]),
+    )
+
+    // Decimal parameter binding
+    use _ <- result.try(ducky.query(
+      conn,
+      "CREATE TABLE prices (amount DECIMAL(18,2))",
+    ))
+
+    use _ <- result.try(
+      ducky.query_params(conn, "INSERT INTO prices VALUES (?)", [
+        ducky.Decimal("99999.99"),
+      ]),
+    )
+
+    use prices <- result.try(ducky.query(conn, "SELECT * FROM prices"))
 
     let _ = ducky.close(conn)
-    Ok(#(points, nested, times, matrices, parsed))
+    Ok(#(names, lists, arrays, maps, decimals, temporals, prices))
   }
 
   case result {
     Ok(data) -> io.println(string.inspect(data))
     Error(err) -> io.println(string.inspect(err))
   }
-}
-
-type Point {
-  Point(x: Int, y: Int)
-}
-
-type Event {
-  Event(name: String, timestamp: Int, attendees: List(ducky.Value))
 }

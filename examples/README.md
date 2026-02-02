@@ -10,9 +10,9 @@ gleam run -m connect_and_query
 
 ## Examples
 
-1. `connect_and_query`: How to connect and run queries
+1. `connect_and_query`: Connect and run queries
 2. `safe_parameters`: Prevent SQL injection with parameters
 3. `automatic_cleanup`: Auto-close connections
 4. `transactions`: Commit/rollback operations
 5. `extract_typed_values`: Pattern match and extract data
-6. `complex_types`: STRUCT, temporal types, and LIST usage
+6. `complex_types`: STRUCT, LIST, ARRAY, MAP, DECIMAL, temporal
