@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-02
+
+### Added
+- DECIMAL type with lossless string encoding
+- ENUM type support
+- ARRAY and MAP types for query results
+- Timestamp, Date, Time parameter binding
+- Interval type with parameter binding
+- HTTP proxy support for NIF downloads
+
+### Changed
+- **BREAKING:** Public API consolidated into single `ducky` module
+- Error decoder now uses proper dynamic decoders
+
+### Fixed
+- Silent NULL conversion for unsupported parameter types
+
 ## [0.2.1] - 2026-01-25
 
 ### Fixed
