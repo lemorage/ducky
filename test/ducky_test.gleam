@@ -1,6 +1,4 @@
 import ducky
-import ducky/error
-import ducky/types
 import gleam/dict
 import gleam/list
 import gleam/option
@@ -84,7 +82,7 @@ pub fn query_params_select_test() {
     ducky.query_params(
       conn,
       "SELECT name FROM users WHERE age > ? ORDER BY name",
-      [types.Integer(28)],
+      [ducky.Integer(28)],
     )
 
   result.columns
@@ -103,8 +101,8 @@ pub fn query_params_insert_test() {
   // Insert with parameters
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO users VALUES (?, ?)", [
-      types.Integer(42),
-      types.Text("Eve"),
+      ducky.Integer(42),
+      ducky.Text("Eve"),
     ])
 
   let assert Ok(result) = ducky.query(conn, "SELECT * FROM users")
@@ -121,9 +119,9 @@ pub fn query_params_null_test() {
 
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO users VALUES (?, ?, ?)", [
-      types.Integer(1),
-      types.Text("Alice"),
-      types.Null,
+      ducky.Integer(1),
+      ducky.Text("Alice"),
+      ducky.Null,
     ])
 
   let assert Ok(result) =
@@ -143,8 +141,8 @@ pub fn with_connection_auto_cleanup_test() {
       ))
       use _inserted <- result.try(
         ducky.query_params(conn, "INSERT INTO test VALUES (?, ?)", [
-          types.Integer(1),
-          types.Text("Alice"),
+          ducky.Integer(1),
+          ducky.Text("Alice"),
         ]),
       )
       ducky.query(conn, "SELECT * FROM test")
@@ -177,8 +175,8 @@ pub fn transaction_commit_on_success_test() {
     ducky.query(conn, "CREATE TABLE accounts (id INT, balance INT)")
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO accounts VALUES (?, ?)", [
-      types.Integer(1),
-      types.Integer(100),
+      ducky.Integer(1),
+      ducky.Integer(100),
     ])
 
   let result =
@@ -187,7 +185,7 @@ pub fn transaction_commit_on_success_test() {
         ducky.query_params(
           conn,
           "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-          [types.Integer(50), types.Integer(1)],
+          [ducky.Integer(50), ducky.Integer(1)],
         ),
       )
       ducky.query(conn, "SELECT balance FROM accounts WHERE id = 1")
@@ -199,7 +197,7 @@ pub fn transaction_commit_on_success_test() {
   let assert Ok(check) =
     ducky.query(conn, "SELECT balance FROM accounts WHERE id = 1")
   let assert [row] = check.rows
-  let assert types.Row([types.Integer(balance)]) = row
+  let assert ducky.Row([ducky.Integer(balance)]) = row
   balance
   |> should.equal(50)
 }
@@ -210,8 +208,8 @@ pub fn transaction_rollback_on_error_test() {
     ducky.query(conn, "CREATE TABLE accounts (id INT, balance INT)")
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO accounts VALUES (?, ?)", [
-      types.Integer(1),
-      types.Integer(100),
+      ducky.Integer(1),
+      ducky.Integer(100),
     ])
 
   let result =
@@ -220,7 +218,7 @@ pub fn transaction_rollback_on_error_test() {
         ducky.query_params(
           conn,
           "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-          [types.Integer(50), types.Integer(1)],
+          [ducky.Integer(50), ducky.Integer(1)],
         ),
       )
       // This should cause an error and trigger rollback
@@ -233,7 +231,7 @@ pub fn transaction_rollback_on_error_test() {
   let assert Ok(check) =
     ducky.query(conn, "SELECT balance FROM accounts WHERE id = 1")
   let assert [row] = check.rows
-  let assert types.Row([types.Integer(balance)]) = row
+  let assert ducky.Row([ducky.Integer(balance)]) = row
   balance
   |> should.equal(100)
 }
@@ -247,16 +245,16 @@ pub fn query_struct_simple_test() {
   |> should.equal(["person"])
 
   let assert [row] = result.rows
-  let assert types.Row([person_value]) = row
-  let assert types.Struct(fields) = person_value
+  let assert ducky.Row([person_value]) = row
+  let assert ducky.Struct(fields) = person_value
   let assert Ok(name_value) = dict.get(fields, "name")
   let assert Ok(age_value) = dict.get(fields, "age")
 
   name_value
-  |> should.equal(types.Text("Alice"))
+  |> should.equal(ducky.Text("Alice"))
 
   age_value
-  |> should.equal(types.Integer(30))
+  |> should.equal(ducky.Integer(30))
 }
 
 pub fn query_struct_with_null_field_test() {
@@ -265,12 +263,12 @@ pub fn query_struct_with_null_field_test() {
     ducky.query(conn, "SELECT {'name': 'Bob', 'email': NULL} as person")
 
   let assert [row] = result.rows
-  let assert types.Row([person_value]) = row
-  let assert types.Struct(fields) = person_value
+  let assert ducky.Row([person_value]) = row
+  let assert ducky.Struct(fields) = person_value
 
   let assert Ok(email_value) = dict.get(fields, "email")
   email_value
-  |> should.equal(types.Null)
+  |> should.equal(ducky.Null)
 }
 
 pub fn query_nested_struct_test() {
@@ -282,25 +280,25 @@ pub fn query_nested_struct_test() {
     )
 
   let assert [row] = result.rows
-  let assert types.Row([data_value]) = row
-  let assert types.Struct(outer_fields) = data_value
+  let assert ducky.Row([data_value]) = row
+  let assert ducky.Struct(outer_fields) = data_value
 
   // Get nested struct
   let assert Ok(person_value) = dict.get(outer_fields, "person")
-  let assert types.Struct(person_fields) = person_value
+  let assert ducky.Struct(person_fields) = person_value
 
   let assert Ok(name_value) = dict.get(person_fields, "name")
   name_value
-  |> should.equal(types.Text("Charlie"))
+  |> should.equal(ducky.Text("Charlie"))
 
   let assert Ok(age_value) = dict.get(person_fields, "age")
   age_value
-  |> should.equal(types.Integer(25))
+  |> should.equal(ducky.Integer(25))
 
   // Get top-level field
   let assert Ok(city_value) = dict.get(outer_fields, "city")
   city_value
-  |> should.equal(types.Text("NYC"))
+  |> should.equal(ducky.Text("NYC"))
 }
 
 pub fn query_struct_field_accessor_test() {
@@ -309,15 +307,15 @@ pub fn query_struct_field_accessor_test() {
     ducky.query(conn, "SELECT {'x': 10, 'y': 20} as point")
 
   let assert [row] = result.rows
-  let assert types.Row([point_value]) = row
+  let assert ducky.Row([point_value]) = row
 
-  types.field(point_value, "x")
-  |> should.equal(option.Some(types.Integer(10)))
+  ducky.field(point_value, "x")
+  |> should.equal(option.Some(ducky.Integer(10)))
 
-  types.field(point_value, "y")
-  |> should.equal(option.Some(types.Integer(20)))
+  ducky.field(point_value, "y")
+  |> should.equal(option.Some(ducky.Integer(20)))
 
-  types.field(point_value, "z")
+  ducky.field(point_value, "z")
   |> should.equal(option.None)
 }
 
@@ -327,10 +325,10 @@ pub fn query_timestamp_test() {
     ducky.query(conn, "SELECT TIMESTAMP '2024-01-15 10:30:45' as ts")
 
   let assert [row] = result.rows
-  let assert types.Row([ts_value]) = row
+  let assert ducky.Row([ts_value]) = row
 
   case ts_value {
-    types.Timestamp(_) -> True
+    ducky.Timestamp(_) -> True
     _ -> False
   }
   |> should.be_true
@@ -345,20 +343,20 @@ pub fn query_date_test() {
     )
 
   let assert [row] = result.rows
-  let assert types.Row([future, epoch, past]) = row
+  let assert ducky.Row([future, epoch, past]) = row
 
   case future {
-    types.Date(days) -> should.be_true(days > 19_000)
+    ducky.Date(days) -> should.be_true(days > 19_000)
     _ -> panic as "Expected Date variant"
   }
 
   case epoch {
-    types.Date(days) -> days |> should.equal(0)
+    ducky.Date(days) -> days |> should.equal(0)
     _ -> panic as "Expected Date variant"
   }
 
   case past {
-    types.Date(days) -> should.be_true(days < 0)
+    ducky.Date(days) -> should.be_true(days < 0)
     _ -> panic as "Expected Date variant"
   }
 }
@@ -372,15 +370,15 @@ pub fn query_time_test() {
     )
 
   let assert [row] = result.rows
-  let assert types.Row([afternoon, midnight]) = row
+  let assert ducky.Row([afternoon, midnight]) = row
 
   case afternoon {
-    types.Time(micros) -> should.be_true(micros > 50_000_000_000)
+    ducky.Time(micros) -> should.be_true(micros > 50_000_000_000)
     _ -> panic as "Expected Time variant"
   }
 
   case midnight {
-    types.Time(micros) -> micros |> should.equal(0)
+    ducky.Time(micros) -> micros |> should.equal(0)
     _ -> panic as "Expected Time variant"
   }
 }
@@ -394,11 +392,11 @@ pub fn query_interval_test() {
     )
 
   let assert [row] = result.rows
-  let assert types.Row([pos, neg]) = row
+  let assert ducky.Row([pos, neg]) = row
 
   // '2 days 3 hours' = months: 0, days: 2, nanos: 3 hours in nanos
   case pos {
-    types.Interval(months, days, nanos) -> {
+    ducky.Interval(months, days, nanos) -> {
       should.equal(months, 0)
       should.equal(days, 2)
       // 3 hours = 3 * 60 * 60 * 1_000_000_000 nanos
@@ -409,7 +407,7 @@ pub fn query_interval_test() {
 
   // '-5 hours' = months: 0, days: 0, nanos: -5 hours in nanos
   case neg {
-    types.Interval(months, days, nanos) -> {
+    ducky.Interval(months, days, nanos) -> {
       should.equal(months, 0)
       should.equal(days, 0)
       // -5 hours = -5 * 60 * 60 * 1_000_000_000 nanos
@@ -432,24 +430,24 @@ pub fn query_temporal_in_struct_test() {
     )
 
   let assert [row] = result.rows
-  let assert types.Row([event_value]) = row
-  let assert types.Struct(fields) = event_value
+  let assert ducky.Row([event_value]) = row
+  let assert ducky.Struct(fields) = event_value
 
   // Check that temporal fields are properly decoded within struct
   let assert Ok(event_name) = dict.get(fields, "event")
   event_name
-  |> should.equal(types.Text("meeting"))
+  |> should.equal(ducky.Text("meeting"))
 
   let assert Ok(ts_value) = dict.get(fields, "timestamp")
   case ts_value {
-    types.Timestamp(_) -> True
+    ducky.Timestamp(_) -> True
     _ -> False
   }
   |> should.be_true
 
   let assert Ok(date_value) = dict.get(fields, "date")
   case date_value {
-    types.Date(_) -> True
+    ducky.Date(_) -> True
     _ -> False
   }
   |> should.be_true
@@ -467,14 +465,14 @@ pub fn query_null_temporal_test() {
 
   let assert Ok(result) = ducky.query(conn, "SELECT ts, d, t FROM events")
   let assert [row] = result.rows
-  let assert types.Row([ts, date, time]) = row
+  let assert ducky.Row([ts, date, time]) = row
 
   ts
-  |> should.equal(types.Null)
+  |> should.equal(ducky.Null)
   date
-  |> should.equal(types.Null)
+  |> should.equal(ducky.Null)
   time
-  |> should.equal(types.Null)
+  |> should.equal(ducky.Null)
 }
 
 pub fn query_simple_list_test() {
@@ -482,16 +480,16 @@ pub fn query_simple_list_test() {
   let assert Ok(result) = ducky.query(conn, "SELECT [1, 2, 3, 4, 5] as nums")
 
   let assert [row] = result.rows
-  let assert types.Row([list_value]) = row
+  let assert ducky.Row([list_value]) = row
 
   case list_value {
-    types.List(items) -> {
+    ducky.List(items) -> {
       list.length(items)
       |> should.equal(5)
 
       let assert [first, ..] = items
       first
-      |> should.equal(types.Integer(1))
+      |> should.equal(ducky.Integer(1))
     }
     _ -> panic as "Expected List variant"
   }
@@ -503,18 +501,18 @@ pub fn query_string_list_test() {
     ducky.query(conn, "SELECT ['apple', 'banana', 'cherry'] as fruits")
 
   let assert [row] = result.rows
-  let assert types.Row([list_value]) = row
+  let assert ducky.Row([list_value]) = row
 
   case list_value {
-    types.List(items) -> {
+    ducky.List(items) -> {
       list.length(items)
       |> should.equal(3)
 
       let assert [first, second, ..] = items
       first
-      |> should.equal(types.Text("apple"))
+      |> should.equal(ducky.Text("apple"))
       second
-      |> should.equal(types.Text("banana"))
+      |> should.equal(ducky.Text("banana"))
     }
     _ -> panic as "Expected List variant"
   }
@@ -525,10 +523,10 @@ pub fn query_empty_list_test() {
   let assert Ok(result) = ducky.query(conn, "SELECT [] as empty")
 
   let assert [row] = result.rows
-  let assert types.Row([list_value]) = row
+  let assert ducky.Row([list_value]) = row
 
   case list_value {
-    types.List(items) -> {
+    ducky.List(items) -> {
       list.length(items)
       |> should.equal(0)
     }
@@ -541,17 +539,17 @@ pub fn query_null_in_list_test() {
   let assert Ok(result) = ducky.query(conn, "SELECT [1, NULL, 3] as nums")
 
   let assert [row] = result.rows
-  let assert types.Row([list_value]) = row
+  let assert ducky.Row([list_value]) = row
 
   case list_value {
-    types.List(items) -> {
+    ducky.List(items) -> {
       let assert [first, second, third] = items
       first
-      |> should.equal(types.Integer(1))
+      |> should.equal(ducky.Integer(1))
       second
-      |> should.equal(types.Null)
+      |> should.equal(ducky.Null)
       third
-      |> should.equal(types.Integer(3))
+      |> should.equal(ducky.Integer(3))
     }
     _ -> panic as "Expected List variant"
   }
@@ -563,24 +561,24 @@ pub fn query_nested_list_test() {
     ducky.query(conn, "SELECT [[1, 2], [3, 4], [5, 6]] as matrix")
 
   let assert [row] = result.rows
-  let assert types.Row([list_value]) = row
+  let assert ducky.Row([list_value]) = row
 
   case list_value {
-    types.List(outer_items) -> {
+    ducky.List(outer_items) -> {
       list.length(outer_items)
       |> should.equal(3)
 
       let assert [first_nested, ..] = outer_items
       case first_nested {
-        types.List(inner) -> {
+        ducky.List(inner) -> {
           list.length(inner)
           |> should.equal(2)
 
           let assert [elem1, elem2] = inner
           elem1
-          |> should.equal(types.Integer(1))
+          |> should.equal(ducky.Integer(1))
           elem2
-          |> should.equal(types.Integer(2))
+          |> should.equal(ducky.Integer(2))
         }
         _ -> panic as "Expected nested List"
       }
@@ -601,16 +599,16 @@ pub fn query_list_in_struct_test() {
     )
 
   let assert [row] = result.rows
-  let assert types.Row([struct_value]) = row
-  let assert types.Struct(fields) = struct_value
+  let assert ducky.Row([struct_value]) = row
+  let assert ducky.Struct(fields) = struct_value
 
   let assert Ok(name_value) = dict.get(fields, "name")
   name_value
-  |> should.equal(types.Text("Alice"))
+  |> should.equal(ducky.Text("Alice"))
 
   let assert Ok(scores_value) = dict.get(fields, "scores")
   case scores_value {
-    types.List(scores) -> {
+    ducky.List(scores) -> {
       list.length(scores)
       |> should.equal(3)
     }
@@ -627,12 +625,12 @@ pub fn query_params_timestamp_test() {
   let micros = 1_705_315_845_000_000
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-      types.Integer(1),
-      types.Timestamp(micros),
+      ducky.Integer(1),
+      ducky.Timestamp(micros),
     ])
 
   let assert Ok(result) = ducky.query(conn, "SELECT ts FROM events")
-  let assert [types.Row([types.Timestamp(returned_micros)])] = result.rows
+  let assert [ducky.Row([ducky.Timestamp(returned_micros)])] = result.rows
   returned_micros
   |> should.equal(micros)
 }
@@ -645,12 +643,12 @@ pub fn query_params_date_test() {
   let days = 19_738
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-      types.Integer(1),
-      types.Date(days),
+      ducky.Integer(1),
+      ducky.Date(days),
     ])
 
   let assert Ok(result) = ducky.query(conn, "SELECT d FROM events")
-  let assert [types.Row([types.Date(returned_days)])] = result.rows
+  let assert [ducky.Row([ducky.Date(returned_days)])] = result.rows
   returned_days
   |> should.equal(days)
 }
@@ -663,12 +661,12 @@ pub fn query_params_time_test() {
   let micros = 52_245_000_000
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-      types.Integer(1),
-      types.Time(micros),
+      ducky.Integer(1),
+      ducky.Time(micros),
     ])
 
   let assert Ok(result) = ducky.query(conn, "SELECT t FROM events")
-  let assert [types.Row([types.Time(returned_micros)])] = result.rows
+  let assert [ducky.Row([ducky.Time(returned_micros)])] = result.rows
   returned_micros
   |> should.equal(micros)
 }
@@ -685,12 +683,12 @@ pub fn query_params_interval_test() {
 
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO events VALUES (?, ?)", [
-      types.Integer(1),
-      types.Interval(months, days, nanos),
+      ducky.Integer(1),
+      ducky.Interval(months, days, nanos),
     ])
 
   let assert Ok(result) = ducky.query(conn, "SELECT duration FROM events")
-  let assert [types.Row([types.Interval(ret_months, ret_days, ret_nanos)])] =
+  let assert [ducky.Row([ducky.Interval(ret_months, ret_days, ret_nanos)])] =
     result.rows
   ret_months |> should.equal(months)
   ret_days |> should.equal(days)
@@ -703,8 +701,8 @@ pub fn query_params_list_unsupported_test() {
     ducky.query(conn, "CREATE TABLE data (id INT, items INT[])")
 
   ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
-    types.Integer(1),
-    types.List([types.Integer(1), types.Integer(2)]),
+    ducky.Integer(1),
+    ducky.List([ducky.Integer(1), ducky.Integer(2)]),
   ])
   |> should.be_error
 }
@@ -715,8 +713,8 @@ pub fn query_params_struct_unsupported_test() {
     ducky.query(conn, "CREATE TABLE data (id INT, metadata STRUCT(x INT))")
 
   ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
-    types.Integer(1),
-    types.Struct(dict.from_list([#("x", types.Integer(10))])),
+    ducky.Integer(1),
+    ducky.Struct(dict.from_list([#("x", ducky.Integer(10))])),
   ])
   |> should.be_error
 }
@@ -725,7 +723,7 @@ pub fn error_connection_failed_type_test() {
   let result = ducky.connect("")
 
   case result {
-    Error(error.ConnectionFailed(_)) -> True
+    Error(ducky.ConnectionFailed(_)) -> True
     _ -> False
   }
   |> should.be_true
@@ -735,7 +733,7 @@ pub fn error_connection_failed_clean_message_test() {
   let result = ducky.connect("")
 
   case result {
-    Error(error.ConnectionFailed(msg)) -> {
+    Error(ducky.ConnectionFailed(msg)) -> {
       string.contains(msg, "#(")
       |> should.be_false
     }
@@ -748,8 +746,8 @@ pub fn error_query_syntax_type_test() {
   let result = ducky.query(conn, "SELEKT * FROM nonexistent")
 
   case result {
-    Error(error.QuerySyntaxError(_)) -> True
-    Error(error.DatabaseError(_)) -> True
+    Error(ducky.QuerySyntaxError(_)) -> True
+    Error(ducky.DatabaseError(_)) -> True
     _ -> False
   }
   |> should.be_true
@@ -760,11 +758,11 @@ pub fn error_query_syntax_clean_message_test() {
   let result = ducky.query(conn, "SELEKT * FROM nonexistent")
 
   case result {
-    Error(error.QuerySyntaxError(msg)) -> {
+    Error(ducky.QuerySyntaxError(msg)) -> {
       string.contains(msg, "#(")
       |> should.be_false
     }
-    Error(error.DatabaseError(msg)) -> {
+    Error(ducky.DatabaseError(msg)) -> {
       string.contains(msg, "#(")
       |> should.be_false
     }
@@ -776,11 +774,11 @@ pub fn error_unsupported_param_type_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let result =
     ducky.query_params(conn, "SELECT ?", [
-      types.List([types.Integer(1), types.Integer(2)]),
+      ducky.List([ducky.Integer(1), ducky.Integer(2)]),
     ])
 
   case result {
-    Error(error.UnsupportedParameterType(msg)) -> {
+    Error(ducky.UnsupportedParameterType(msg)) -> {
       // Message should describe the unsupported types
       string.contains(msg, "List")
       |> should.be_true
@@ -797,12 +795,12 @@ pub fn query_params_decimal_test() {
   let amount = "1234.56"
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO prices VALUES (?, ?)", [
-      types.Integer(1),
-      types.Decimal(amount),
+      ducky.Integer(1),
+      ducky.Decimal(amount),
     ])
 
   let assert Ok(result) = ducky.query(conn, "SELECT amount FROM prices")
-  let assert [types.Row([types.Decimal(returned_amount)])] = result.rows
+  let assert [ducky.Row([ducky.Decimal(returned_amount)])] = result.rows
   returned_amount
   |> should.equal(amount)
 }
@@ -813,7 +811,7 @@ pub fn query_decimal_preserves_precision_test() {
   let assert Ok(result) =
     ducky.query(conn, "SELECT 123456789.123456789::DECIMAL(18,9) as d")
 
-  let assert [types.Row([types.Decimal(value)])] = result.rows
+  let assert [ducky.Row([ducky.Decimal(value)])] = result.rows
   value
   |> should.equal("123456789.123456789")
 }
@@ -823,7 +821,7 @@ pub fn query_decimal_negative_test() {
 
   let assert Ok(result) = ducky.query(conn, "SELECT -99.99::DECIMAL(5,2) as d")
 
-  let assert [types.Row([types.Decimal(value)])] = result.rows
+  let assert [ducky.Row([ducky.Decimal(value)])] = result.rows
   string.contains(value, "99.99")
   |> should.be_true
 }
@@ -836,7 +834,7 @@ pub fn query_decimal_in_table_test() {
 
   let assert Ok(result) = ducky.query(conn, "SELECT * FROM prices")
 
-  let assert [types.Row([types.Decimal(value)])] = result.rows
+  let assert [ducky.Row([ducky.Decimal(value)])] = result.rows
   value
   |> should.equal("1234.56")
 }
@@ -848,7 +846,7 @@ pub fn query_enum_returns_text_test() {
 
   let assert Ok(result) = ducky.query(conn, "SELECT 'pending'::status as s")
 
-  let assert [types.Row([types.Text(value)])] = result.rows
+  let assert [ducky.Row([ducky.Text(value)])] = result.rows
   value
   |> should.equal("pending")
 }
@@ -863,7 +861,7 @@ pub fn query_enum_in_table_test() {
 
   let assert Ok(result) = ducky.query(conn, "SELECT * FROM tasks ORDER BY p")
 
-  let assert [types.Row([types.Text(p1)]), types.Row([types.Text(p2)])] =
+  let assert [ducky.Row([ducky.Text(p1)]), ducky.Row([ducky.Text(p2)])] =
     result.rows
   p1
   |> should.equal("low")
@@ -878,11 +876,11 @@ pub fn query_array_simple_test() {
   let assert Ok(result) =
     ducky.query(conn, "SELECT [1, 2, 3]::INTEGER[3] as arr")
 
-  let assert [types.Row([types.Array(elements)])] = result.rows
+  let assert [ducky.Row([ducky.Array(elements)])] = result.rows
   list.length(elements)
   |> should.equal(3)
 
-  let assert [types.Integer(a), types.Integer(b), types.Integer(c)] = elements
+  let assert [ducky.Integer(a), ducky.Integer(b), ducky.Integer(c)] = elements
   a |> should.equal(1)
   b |> should.equal(2)
   c |> should.equal(3)
@@ -894,8 +892,8 @@ pub fn query_array_strings_test() {
   let assert Ok(result) =
     ducky.query(conn, "SELECT ['a', 'b']::VARCHAR[2] as arr")
 
-  let assert [types.Row([types.Array(elements)])] = result.rows
-  let assert [types.Text(a), types.Text(b)] = elements
+  let assert [ducky.Row([ducky.Array(elements)])] = result.rows
+  let assert [ducky.Text(a), ducky.Text(b)] = elements
   a |> should.equal("a")
   b |> should.equal("b")
 }
@@ -906,10 +904,10 @@ pub fn query_map_simple_test() {
   let assert Ok(result) =
     ducky.query(conn, "SELECT MAP {'key1': 'value1', 'key2': 'value2'} as m")
 
-  let assert [types.Row([types.Map(entries)])] = result.rows
+  let assert [ducky.Row([ducky.Map(entries)])] = result.rows
 
-  let assert Ok(types.Text(v1)) = dict.get(entries, "key1")
-  let assert Ok(types.Text(v2)) = dict.get(entries, "key2")
+  let assert Ok(ducky.Text(v1)) = dict.get(entries, "key1")
+  let assert Ok(ducky.Text(v2)) = dict.get(entries, "key2")
 
   v1 |> should.equal("value1")
   v2 |> should.equal("value2")
@@ -921,10 +919,10 @@ pub fn query_map_int_values_test() {
   let assert Ok(result) =
     ducky.query(conn, "SELECT MAP {'x': 10, 'y': 20} as coords")
 
-  let assert [types.Row([types.Map(entries)])] = result.rows
+  let assert [ducky.Row([ducky.Map(entries)])] = result.rows
 
-  let assert Ok(types.Integer(x)) = dict.get(entries, "x")
-  let assert Ok(types.Integer(y)) = dict.get(entries, "y")
+  let assert Ok(ducky.Integer(x)) = dict.get(entries, "x")
+  let assert Ok(ducky.Integer(y)) = dict.get(entries, "y")
 
   x |> should.equal(10)
   y |> should.equal(20)
@@ -939,7 +937,7 @@ pub fn query_map_in_table_test() {
 
   let assert Ok(result) = ducky.query(conn, "SELECT * FROM config")
 
-  let assert [types.Row([types.Map(entries)])] = result.rows
-  let assert Ok(types.Text(theme)) = dict.get(entries, "theme")
+  let assert [ducky.Row([ducky.Map(entries)])] = result.rows
+  let assert Ok(ducky.Text(theme)) = dict.get(entries, "theme")
   theme |> should.equal("dark")
 }

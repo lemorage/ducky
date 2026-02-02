@@ -1,7 +1,6 @@
 // Parameterized queries prevent SQL injection
 
 import ducky
-import ducky/types
 import gleam/io
 import gleam/result
 import gleam/string
@@ -20,9 +19,9 @@ pub fn main() {
     // Insert with parameters
     use _ <- result.try(
       ducky.query_params(conn, "INSERT INTO users VALUES (?, ?, ?)", [
-        types.Integer(1),
-        types.Text("Alice"),
-        types.Boolean(True),
+        ducky.Integer(1),
+        ducky.Text("Alice"),
+        ducky.Boolean(True),
       ]),
     )
 
@@ -30,16 +29,16 @@ pub fn main() {
     let user_input = "Alice"
     use df <- result.try(
       ducky.query_params(conn, "SELECT * FROM users WHERE name = ?", [
-        types.Text(user_input),
+        ducky.Text(user_input),
       ]),
     )
 
     // NULL values
     use _ <- result.try(
       ducky.query_params(conn, "INSERT INTO users VALUES (?, ?, ?)", [
-        types.Integer(2),
-        types.Null,
-        types.Boolean(False),
+        ducky.Integer(2),
+        ducky.Null,
+        ducky.Boolean(False),
       ]),
     )
 

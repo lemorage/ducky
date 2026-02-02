@@ -1,7 +1,6 @@
 // Transactions commit on success, rollback on error
 
 import ducky
-import ducky/types
 import gleam/io
 import gleam/result
 import gleam/string
@@ -30,14 +29,14 @@ pub fn main() {
           ducky.query_params(
             conn,
             "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-            [types.Integer(200), types.Integer(1)],
+            [ducky.Integer(200), ducky.Integer(1)],
           ),
         )
 
         ducky.query_params(
           conn,
           "UPDATE accounts SET balance = balance + ? WHERE id = ?",
-          [types.Integer(200), types.Integer(2)],
+          [ducky.Integer(200), ducky.Integer(2)],
         )
       })
 
@@ -50,7 +49,7 @@ pub fn main() {
           ducky.query_params(
             conn,
             "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-            [types.Integer(100), types.Integer(1)],
+            [ducky.Integer(100), ducky.Integer(1)],
           ),
         )
 

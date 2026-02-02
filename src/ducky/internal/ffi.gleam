@@ -1,7 +1,7 @@
-//// Foreign Function Interface to the Rust NIF layer.
+//// Foreign function interface bindings.
 ////
-//// This module provides low-level bindings to the native DuckDB implementation.
-//// These functions should not be used directly; use the public API instead.
+//// All @external declarations live here: DuckDB NIF and Erlang stdlib.
+//// Do not use directly; use the public API instead.
 
 import gleam/dynamic.{type Dynamic}
 
@@ -9,14 +9,10 @@ import gleam/dynamic.{type Dynamic}
 pub type NativeConnection
 
 /// Opens a connection to a DuckDB database.
-///
-/// Returns the raw NIF result which must be decoded.
 @external(erlang, "ducky_nif", "connect")
 pub fn connect(path: String) -> Result(NativeConnection, Dynamic)
 
 /// Closes a database connection.
-///
-/// Returns nil atom on success.
 @external(erlang, "ducky_nif", "close")
 pub fn close(conn: NativeConnection) -> Result(Dynamic, Dynamic)
 
@@ -35,6 +31,18 @@ pub fn execute_query(
   params: List(Dynamic),
 ) -> Result(#(List(String), List(List(Dynamic))), Dynamic)
 
-/// Health check function to verify NIF is loaded.
-@external(erlang, "ducky_nif", "test")
+/// Health check to verify NIF is loaded.
+@external(erlang, "ducky_nif", "health_check")
 pub fn health_check() -> String
+
+/// Converts an atom to a string.
+@external(erlang, "erlang", "atom_to_binary")
+pub fn atom_to_string(atom: Dynamic) -> String
+
+/// Converts a string to an atom.
+@external(erlang, "erlang", "binary_to_atom")
+pub fn binary_to_atom(s: String) -> Dynamic
+
+/// Converts a list to a tuple.
+@external(erlang, "erlang", "list_to_tuple")
+pub fn list_to_tuple(items: List(Dynamic)) -> Dynamic

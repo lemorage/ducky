@@ -1,7 +1,6 @@
 // Automatic connection cleanup
 
 import ducky
-import ducky/types
 import gleam/io
 import gleam/result
 import gleam/string
@@ -19,8 +18,8 @@ pub fn main() {
       // Insert data
       use _ <- result.try(
         ducky.query_params(conn, "INSERT INTO products VALUES (?, ?)", [
-          types.Integer(1),
-          types.Text("Widget"),
+          ducky.Integer(1),
+          ducky.Text("Widget"),
         ]),
       )
 

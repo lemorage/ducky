@@ -1,7 +1,6 @@
 // Complex types: STRUCT, temporal types, and LIST
 
 import ducky
-import ducky/types
 import gleam/io
 import gleam/list
 import gleam/option
@@ -23,10 +22,10 @@ pub fn main() {
     let points =
       struct_df.rows
       |> list.filter_map(fn(row) {
-        case types.get(row, 1) {
+        case ducky.get(row, 1) {
           option.Some(point) ->
-            case types.field(point, "x"), types.field(point, "y") {
-              option.Some(types.Integer(x)), option.Some(types.Integer(y)) ->
+            case ducky.field(point, "x"), ducky.field(point, "y") {
+              option.Some(ducky.Integer(x)), option.Some(ducky.Integer(y)) ->
                 Ok(Point(x, y))
               _, _ -> Error(Nil)
             }
@@ -56,8 +55,8 @@ pub fn main() {
     let times =
       temporal.rows
       |> list.filter_map(fn(row) {
-        case types.get(row, 0), types.get(row, 1) {
-          option.Some(types.Timestamp(ts)), option.Some(types.Date(days)) ->
+        case ducky.get(row, 0), ducky.get(row, 1) {
+          option.Some(ducky.Timestamp(ts)), option.Some(ducky.Date(days)) ->
             Ok(#(ts, days))
           _, _ -> Error(Nil)
         }
@@ -75,10 +74,10 @@ pub fn main() {
     let matrices =
       lists.rows
       |> list.filter_map(fn(row) {
-        case types.get(row, 2) {
-          option.Some(types.List(outer)) ->
+        case ducky.get(row, 2) {
+          option.Some(ducky.List(outer)) ->
             case outer {
-              [types.List(first), ..] -> Ok(first)
+              [ducky.List(first), ..] -> Ok(first)
               _ -> Error(Nil)
             }
           _ -> Error(Nil)
@@ -115,16 +114,16 @@ pub fn main() {
     let parsed =
       events.rows
       |> list.filter_map(fn(row) {
-        case types.get(row, 1) {
+        case ducky.get(row, 1) {
           option.Some(data) ->
             case
-              types.field(data, "name"),
-              types.field(data, "timestamp"),
-              types.field(data, "attendees")
+              ducky.field(data, "name"),
+              ducky.field(data, "timestamp"),
+              ducky.field(data, "attendees")
             {
-              option.Some(types.Text(name)),
-                option.Some(types.Timestamp(ts)),
-                option.Some(types.List(attendees))
+              option.Some(ducky.Text(name)),
+                option.Some(ducky.Timestamp(ts)),
+                option.Some(ducky.List(attendees))
               -> Ok(Event(name, ts, attendees))
               _, _, _ -> Error(Nil)
             }
@@ -147,5 +146,5 @@ type Point {
 }
 
 type Event {
-  Event(name: String, timestamp: Int, attendees: List(types.Value))
+  Event(name: String, timestamp: Int, attendees: List(ducky.Value))
 }

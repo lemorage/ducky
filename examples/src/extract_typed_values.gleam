@@ -1,7 +1,6 @@
 // Pattern matching and extracting typed values
 
 import ducky
-import ducky/types
 import gleam/io
 import gleam/list
 import gleam/option
@@ -34,10 +33,10 @@ pub fn main() {
 
     // Pattern match to extract values
     list.each(df.rows, fn(row) {
-      case types.get(row, 0), types.get(row, 1), types.get(row, 2) {
-        option.Some(types.Integer(id)),
-          option.Some(types.Text(name)),
-          option.Some(types.Double(price))
+      case ducky.get(row, 0), ducky.get(row, 1), ducky.get(row, 2) {
+        option.Some(ducky.Integer(id)),
+          option.Some(ducky.Text(name)),
+          option.Some(ducky.Double(price))
         -> io.println(string.inspect(#(id, name, price)))
         _, _, _ -> Nil
       }
@@ -47,8 +46,8 @@ pub fn main() {
     let active =
       df.rows
       |> list.filter(fn(row) {
-        case types.get(row, 3) {
-          option.Some(types.Boolean(True)) -> True
+        case ducky.get(row, 3) {
+          option.Some(ducky.Boolean(True)) -> True
           _ -> False
         }
       })
@@ -59,8 +58,8 @@ pub fn main() {
     let products =
       df.rows
       |> list.filter_map(fn(row) {
-        case types.get(row, 0), types.get(row, 1) {
-          option.Some(types.Integer(id)), option.Some(types.Text(name)) ->
+        case ducky.get(row, 0), ducky.get(row, 1) {
+          option.Some(ducky.Integer(id)), option.Some(ducky.Text(name)) ->
             Ok(Product(id, name))
           _, _ -> Error(Nil)
         }
