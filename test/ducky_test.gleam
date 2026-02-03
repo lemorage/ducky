@@ -12,8 +12,8 @@ pub fn main() {
 }
 
 pub fn connect_memory_database_test() {
-  ducky.connect(":memory:")
-  |> should.be_ok
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let _ = ducky.close(conn)
 }
 
 pub fn connect_empty_path_test() {
@@ -31,6 +31,8 @@ pub fn query_empty_sql_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   ducky.query(conn, "")
   |> should.be_error
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_select_simple_test() {
@@ -43,12 +45,16 @@ pub fn query_select_simple_test() {
 
   result.rows
   |> should.not_equal([])
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_create_table_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
   |> should.be_ok
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_insert_and_select_test() {
@@ -66,6 +72,8 @@ pub fn query_insert_and_select_test() {
   result.rows
   |> list.length
   |> should.equal(2)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_select_test() {
@@ -91,6 +99,8 @@ pub fn query_params_select_test() {
   result.rows
   |> list.length
   |> should.equal(2)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_insert_test() {
@@ -110,6 +120,8 @@ pub fn query_params_insert_test() {
   result.rows
   |> list.length
   |> should.equal(1)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_null_test() {
@@ -130,6 +142,8 @@ pub fn query_params_null_test() {
   result.rows
   |> list.length
   |> should.equal(1)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn with_connection_auto_cleanup_test() {
@@ -200,6 +214,8 @@ pub fn transaction_commit_on_success_test() {
   let assert ducky.Row([ducky.Integer(balance)]) = row
   balance
   |> should.equal(50)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn transaction_rollback_on_error_test() {
@@ -234,6 +250,8 @@ pub fn transaction_rollback_on_error_test() {
   let assert ducky.Row([ducky.Integer(balance)]) = row
   balance
   |> should.equal(100)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_struct_simple_test() {
@@ -255,6 +273,8 @@ pub fn query_struct_simple_test() {
 
   age_value
   |> should.equal(ducky.Integer(30))
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_struct_with_null_field_test() {
@@ -269,6 +289,8 @@ pub fn query_struct_with_null_field_test() {
   let assert Ok(email_value) = dict.get(fields, "email")
   email_value
   |> should.equal(ducky.Null)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_nested_struct_test() {
@@ -299,6 +321,8 @@ pub fn query_nested_struct_test() {
   let assert Ok(city_value) = dict.get(outer_fields, "city")
   city_value
   |> should.equal(ducky.Text("NYC"))
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_struct_field_accessor_test() {
@@ -317,6 +341,8 @@ pub fn query_struct_field_accessor_test() {
 
   ducky.field(point_value, "z")
   |> should.equal(option.None)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_timestamp_test() {
@@ -332,6 +358,8 @@ pub fn query_timestamp_test() {
     _ -> False
   }
   |> should.be_true
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_date_test() {
@@ -359,6 +387,8 @@ pub fn query_date_test() {
     ducky.Date(days) -> should.be_true(days < 0)
     _ -> panic as "Expected Date variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_time_test() {
@@ -381,6 +411,8 @@ pub fn query_time_test() {
     ducky.Time(micros) -> micros |> should.equal(0)
     _ -> panic as "Expected Time variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_interval_test() {
@@ -415,6 +447,8 @@ pub fn query_interval_test() {
     }
     _ -> panic as "Expected Interval variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_temporal_in_struct_test() {
@@ -451,6 +485,8 @@ pub fn query_temporal_in_struct_test() {
     _ -> False
   }
   |> should.be_true
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_null_temporal_test() {
@@ -473,6 +509,8 @@ pub fn query_null_temporal_test() {
   |> should.equal(ducky.Null)
   time
   |> should.equal(ducky.Null)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_simple_list_test() {
@@ -493,6 +531,8 @@ pub fn query_simple_list_test() {
     }
     _ -> panic as "Expected List variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_string_list_test() {
@@ -516,6 +556,8 @@ pub fn query_string_list_test() {
     }
     _ -> panic as "Expected List variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_empty_list_test() {
@@ -532,6 +574,8 @@ pub fn query_empty_list_test() {
     }
     _ -> panic as "Expected List variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_null_in_list_test() {
@@ -553,6 +597,8 @@ pub fn query_null_in_list_test() {
     }
     _ -> panic as "Expected List variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_nested_list_test() {
@@ -585,6 +631,8 @@ pub fn query_nested_list_test() {
     }
     _ -> panic as "Expected List variant"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_list_in_struct_test() {
@@ -614,6 +662,8 @@ pub fn query_list_in_struct_test() {
     }
     _ -> panic as "Expected List in struct"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_timestamp_test() {
@@ -633,6 +683,8 @@ pub fn query_params_timestamp_test() {
   let assert [ducky.Row([ducky.Timestamp(returned_micros)])] = result.rows
   returned_micros
   |> should.equal(micros)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_date_test() {
@@ -651,6 +703,8 @@ pub fn query_params_date_test() {
   let assert [ducky.Row([ducky.Date(returned_days)])] = result.rows
   returned_days
   |> should.equal(days)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_time_test() {
@@ -669,6 +723,8 @@ pub fn query_params_time_test() {
   let assert [ducky.Row([ducky.Time(returned_micros)])] = result.rows
   returned_micros
   |> should.equal(micros)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_interval_test() {
@@ -693,6 +749,8 @@ pub fn query_params_interval_test() {
   ret_months |> should.equal(months)
   ret_days |> should.equal(days)
   ret_nanos |> should.equal(nanos)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_list_unsupported_test() {
@@ -705,6 +763,8 @@ pub fn query_params_list_unsupported_test() {
     ducky.List([ducky.Integer(1), ducky.Integer(2)]),
   ])
   |> should.be_error
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_struct_unsupported_test() {
@@ -717,6 +777,8 @@ pub fn query_params_struct_unsupported_test() {
     ducky.Struct(dict.from_list([#("x", ducky.Integer(10))])),
   ])
   |> should.be_error
+
+  let _ = ducky.close(conn)
 }
 
 pub fn error_connection_failed_type_test() {
@@ -751,6 +813,8 @@ pub fn error_query_syntax_type_test() {
     _ -> False
   }
   |> should.be_true
+
+  let _ = ducky.close(conn)
 }
 
 pub fn error_query_syntax_clean_message_test() {
@@ -768,6 +832,8 @@ pub fn error_query_syntax_clean_message_test() {
     }
     _ -> panic as "Expected QuerySyntaxError or DatabaseError"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn error_unsupported_param_type_test() {
@@ -785,6 +851,8 @@ pub fn error_unsupported_param_type_test() {
     }
     _ -> panic as "Expected UnsupportedParameterType error"
   }
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_params_decimal_test() {
@@ -803,6 +871,8 @@ pub fn query_params_decimal_test() {
   let assert [ducky.Row([ducky.Decimal(returned_amount)])] = result.rows
   returned_amount
   |> should.equal(amount)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_decimal_preserves_precision_test() {
@@ -814,6 +884,8 @@ pub fn query_decimal_preserves_precision_test() {
   let assert [ducky.Row([ducky.Decimal(value)])] = result.rows
   value
   |> should.equal("123456789.123456789")
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_decimal_negative_test() {
@@ -824,6 +896,8 @@ pub fn query_decimal_negative_test() {
   let assert [ducky.Row([ducky.Decimal(value)])] = result.rows
   string.contains(value, "99.99")
   |> should.be_true
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_decimal_in_table_test() {
@@ -837,6 +911,8 @@ pub fn query_decimal_in_table_test() {
   let assert [ducky.Row([ducky.Decimal(value)])] = result.rows
   value
   |> should.equal("1234.56")
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_enum_returns_text_test() {
@@ -849,6 +925,8 @@ pub fn query_enum_returns_text_test() {
   let assert [ducky.Row([ducky.Text(value)])] = result.rows
   value
   |> should.equal("pending")
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_enum_in_table_test() {
@@ -867,6 +945,8 @@ pub fn query_enum_in_table_test() {
   |> should.equal("low")
   p2
   |> should.equal("high")
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_array_simple_test() {
@@ -884,6 +964,8 @@ pub fn query_array_simple_test() {
   a |> should.equal(1)
   b |> should.equal(2)
   c |> should.equal(3)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_array_strings_test() {
@@ -896,6 +978,8 @@ pub fn query_array_strings_test() {
   let assert [ducky.Text(a), ducky.Text(b)] = elements
   a |> should.equal("a")
   b |> should.equal("b")
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_map_simple_test() {
@@ -911,6 +995,8 @@ pub fn query_map_simple_test() {
 
   v1 |> should.equal("value1")
   v2 |> should.equal("value2")
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_map_int_values_test() {
@@ -926,6 +1012,8 @@ pub fn query_map_int_values_test() {
 
   x |> should.equal(10)
   y |> should.equal(20)
+
+  let _ = ducky.close(conn)
 }
 
 pub fn query_map_in_table_test() {
@@ -940,4 +1028,6 @@ pub fn query_map_in_table_test() {
   let assert [ducky.Row([ducky.Map(entries)])] = result.rows
   let assert Ok(ducky.Text(theme)) = dict.get(entries, "theme")
   theme |> should.equal("dark")
+
+  let _ = ducky.close(conn)
 }
