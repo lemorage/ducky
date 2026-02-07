@@ -46,6 +46,7 @@ mod atoms {
         interval,
         array,
         map,
+        union,
     }
 }
 
@@ -260,9 +261,7 @@ fn value_to_term<'a, 'b>(env: Env<'a>, value: ValueRef<'b>) -> NifResult<Term<'a
         },
         ValueRef::Array(array, row_idx) => encode_array(env, array, row_idx),
         ValueRef::Map(map_array, row_idx) => encode_map(env, map_array, row_idx),
-        ValueRef::Union(_union_ref, _row_idx) => Err(rustler::Error::Term(Box::new(
-            "DuckDB UNION type not yet supported",
-        ))),
+        ValueRef::Union(union_ref, row_idx) => encode_union(env, union_ref, row_idx),
     }
 }
 
@@ -544,6 +543,57 @@ fn encode_map<'a>(
     }
 
     Ok((atoms::map(), result_map).encode(env))
+}
+
+/// Encodes a DuckDB union as an Erlang tagged tuple {union, tag_string, value}.
+fn encode_union<'a>(
+    env: Env<'a>,
+    union_ref: &duckdb::arrow::array::ArrayRef,
+    row_idx: usize,
+) -> NifResult<Term<'a>> {
+    use duckdb::arrow::array::Array;
+    use duckdb::arrow::datatypes::{DataType, UnionMode};
+
+    let union_array = union_ref
+        .as_any()
+        .downcast_ref::<duckdb::arrow::array::UnionArray>()
+        .ok_or_else(|| rustler::Error::Term(Box::new("Failed to downcast to UnionArray")))?;
+
+    if union_array.is_null(row_idx) {
+        return Ok(atoms::null().encode(env));
+    }
+
+    let type_id = union_array.type_id(row_idx);
+
+    let (fields, mode) = match union_array.data_type() {
+        DataType::Union(fields, mode) => (fields, mode),
+        _ => {
+            return Err(rustler::Error::Term(Box::new(
+                "Union array has non-union data type",
+            )));
+        }
+    };
+
+    let (_, field) = fields
+        .iter()
+        .find(|(tid, _)| *tid == type_id)
+        .ok_or_else(|| rustler::Error::Term(Box::new("Invalid union type_id")))?;
+
+    let child_idx = match mode {
+        UnionMode::Dense => union_array.value_offset(row_idx),
+        UnionMode::Sparse => row_idx,
+    };
+    let child_array = union_array.child(type_id);
+    let value_term = if child_array.is_null(child_idx) {
+        atoms::null().encode(env)
+    } else {
+        match arrow_element_to_value_ref(child_array.as_ref(), child_idx) {
+            Ok(value_ref) => value_to_term(env, value_ref)?,
+            Err(e) => return Err(rustler::Error::Term(Box::new(e))),
+        }
+    };
+
+    Ok((atoms::union(), field.name(), value_term).encode(env))
 }
 
 /// Converts a ValueRef to a string representation (for map keys).

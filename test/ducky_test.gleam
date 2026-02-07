@@ -941,3 +941,130 @@ pub fn query_map_in_table_test() {
   let assert Ok(ducky.Text(theme)) = dict.get(entries, "theme")
   theme |> should.equal("dark")
 }
+
+pub fn query_union_simple_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT union_value(num := 42) as u")
+
+  let assert [ducky.Row([ducky.Union(tag, value)])] = result.rows
+  tag |> should.equal("num")
+  value |> should.equal(ducky.Integer(42))
+}
+
+pub fn query_union_string_variant_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT union_value(str := 'hello') as u")
+
+  let assert [ducky.Row([ducky.Union(tag, value)])] = result.rows
+  tag |> should.equal("str")
+  value |> should.equal(ducky.Text("hello"))
+}
+
+pub fn query_union_in_table_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(_) =
+    ducky.query(
+      conn,
+      "CREATE TYPE int_or_str AS UNION(num INTEGER, str VARCHAR)",
+    )
+
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE data (value int_or_str)")
+
+  let assert Ok(_) =
+    ducky.query(
+      conn,
+      "INSERT INTO data VALUES (42::int_or_str), ('hello'::int_or_str)",
+    )
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM data")
+
+  result.rows |> list.length |> should.equal(2)
+
+  let assert [ducky.Row([first]), ducky.Row([second])] = result.rows
+
+  case first {
+    ducky.Union(tag, ducky.Integer(n)) -> {
+      tag |> should.equal("num")
+      n |> should.equal(42)
+    }
+    _ -> panic as "Expected Union with Integer"
+  }
+
+  case second {
+    ducky.Union(tag, ducky.Text(s)) -> {
+      tag |> should.equal("str")
+      s |> should.equal("hello")
+    }
+    _ -> panic as "Expected Union with Text"
+  }
+}
+
+pub fn query_union_null_value_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT union_value(num := NULL::INTEGER) as u")
+
+  let assert [ducky.Row([ducky.Union(tag, value)])] = result.rows
+  tag |> should.equal("num")
+  value |> should.equal(ducky.Null)
+}
+
+pub fn query_union_multiple_types_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(_) =
+    ducky.query(
+      conn,
+      "CREATE TYPE multi_union AS UNION(i INTEGER, f DOUBLE, s VARCHAR, b BOOLEAN)",
+    )
+
+  let assert Ok(result) =
+    ducky.query(
+      conn,
+      "SELECT
+        42::multi_union as int_val,
+        3.14::multi_union as float_val,
+        'test'::multi_union as str_val,
+        true::multi_union as bool_val",
+    )
+
+  let assert [ducky.Row([int_u, float_u, str_u, bool_u])] = result.rows
+
+  case int_u {
+    ducky.Union("i", ducky.Integer(42)) -> True
+    _ -> False
+  }
+  |> should.be_true
+
+  case float_u {
+    ducky.Union("f", ducky.Double(f)) -> f |> should.equal(3.14)
+    _ -> panic as "Expected Union with Double"
+  }
+
+  case str_u {
+    ducky.Union("s", ducky.Text("test")) -> True
+    _ -> False
+  }
+  |> should.be_true
+
+  case bool_u {
+    ducky.Union("b", ducky.Boolean(True)) -> True
+    _ -> False
+  }
+  |> should.be_true
+}
+
+pub fn query_union_param_unsupported_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  ducky.query_params(conn, "SELECT ?", [
+    ducky.Union("tag", ducky.Integer(42)),
+  ])
+  |> should.be_error
+}

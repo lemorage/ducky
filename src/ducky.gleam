@@ -85,6 +85,7 @@ pub type Value {
   Array(List(Value))
   Map(Dict(String, Value))
   Struct(Dict(String, Value))
+  Union(tag: String, value: Value)
 }
 
 /// A single row from a query result.
@@ -337,9 +338,9 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     Interval(months, days, nanos) ->
       Ok(make_interval_tuple(months, days, nanos))
     Decimal(s) -> Ok(make_tagged("decimal", dynamic.string(s)))
-    List(_) | Array(_) | Map(_) | Struct(_) ->
+    List(_) | Array(_) | Map(_) | Struct(_) | Union(_, _) ->
       Error(UnsupportedParameterType(
-        "List, Array, Map, and Struct types cannot be used as query parameters",
+        "List, Array, Map, Struct, and Union types cannot be used as query parameters",
       ))
   }
 }
@@ -433,6 +434,7 @@ fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Value {
         "decimal" -> decode_decimal_value(dyn)
         "array" -> decode_array_value(dyn)
         "map" -> decode_map_value(dyn)
+        "union" -> decode_union_value(dyn)
         "timestamp" | "date" | "time" -> decode_temporal_tuple(dyn)
         "interval" -> decode_interval_tuple(dyn)
         _ -> Null
@@ -490,6 +492,19 @@ fn decode_map_value(dyn: dynamic.Dynamic) -> Value {
         |> dict.from_list
       Map(decoded_entries)
     }
+    Error(_) -> Null
+  }
+}
+
+/// Decodes a union tagged tuple {union, tag_string, value}.
+fn decode_union_value(dyn: dynamic.Dynamic) -> Value {
+  let decoder = {
+    use tag <- decode.subfield([1], decode.string)
+    use value <- decode.subfield([2], decode.dynamic)
+    decode.success(#(tag, value))
+  }
+  case decode.run(dyn, decoder) {
+    Ok(#(tag, value)) -> Union(tag: tag, value: decode_value(value))
     Error(_) -> Null
   }
 }
