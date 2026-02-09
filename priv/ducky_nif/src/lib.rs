@@ -781,7 +781,7 @@ fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, Duc
 
 /// Health check NIF to verify the library loads correctly.
 #[rustler::nif]
-fn test() -> String {
+fn health_check() -> String {
     "DuckDB NIF loaded successfully!".to_string()
 }
 
