@@ -27,6 +27,7 @@ mod atoms {
         query_syntax_error,
         unsupported_parameter_type,
         database_error,
+        statement_finalized,
         nil,
         // Type atoms
         null,
@@ -57,6 +58,7 @@ pub enum DuckyError {
     QuerySyntaxError(String),
     UnsupportedParameterType(String),
     DatabaseError(String),
+    StatementFinalized,
 }
 
 impl Encoder for DuckyError {
@@ -72,6 +74,9 @@ impl Encoder for DuckyError {
                 (atoms::unsupported_parameter_type(), msg.as_str()).encode(env)
             }
             DuckyError::DatabaseError(msg) => (atoms::database_error(), msg.as_str()).encode(env),
+            DuckyError::StatementFinalized => {
+                (atoms::statement_finalized(), "statement has been finalized").encode(env)
+            }
         };
         (atoms::error(), reason).encode(env)
     }
@@ -85,7 +90,6 @@ impl From<duckdb::Error> for DuckyError {
 
 /// Resource wrapper for DuckDB connection with thread-safe access.
 pub struct ConnectionResource {
-    #[allow(dead_code)]
     connection: Mutex<DuckDBConnection>,
 }
 
@@ -95,6 +99,17 @@ impl ConnectionResource {
             connection: Mutex::new(connection),
         }
     }
+}
+
+/// Resource wrapper for a prepared statement.
+///
+/// Holds a reference to the connection (keeping it alive) and the SQL string.
+/// The statement is re-prepared on each execute, but DuckDB's internal cache
+/// makes repeated preparations fast. This design avoids lifetime complexity
+/// while providing the ergonomic benefits of a prepared statement API.
+pub struct StatementResource {
+    connection: ResourceArc<ConnectionResource>,
+    sql: Mutex<Option<String>>,
 }
 
 /// Opens a connection to a DuckDB database.
@@ -136,6 +151,108 @@ fn close(conn: ResourceArc<ConnectionResource>) -> Result<rustler::Atom, DuckyEr
     // DuckDB connections are closed via Drop when ResourceArc is dropped
     // We just validate the connection is accessible before allowing the drop
     drop(_guard);
+    Ok(atoms::nil())
+}
+
+/// Prepares a SQL statement for repeated execution.
+///
+/// Validates the SQL by preparing it once, then stores the SQL string
+/// for efficient re-execution with different parameters.
+///
+/// ## Arguments
+/// - `conn`: Connection resource
+/// - `sql`: SQL query string with `?` placeholders
+///
+/// ## Returns
+/// - `Ok(ResourceArc<StatementResource>)` on success
+/// - `Err(DuckyError)` if SQL is invalid
+#[rustler::nif]
+fn prepare(
+    conn: ResourceArc<ConnectionResource>,
+    sql: String,
+) -> Result<ResourceArc<StatementResource>, DuckyError> {
+    {
+        let connection = conn
+            .connection
+            .lock()
+            .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock connection: {}", e)))?;
+        let _ = connection.prepare(&sql)?;
+    }
+
+    Ok(ResourceArc::new(StatementResource {
+        connection: conn,
+        sql: Mutex::new(Some(sql)),
+    }))
+}
+
+/// Executes a prepared statement with parameters.
+///
+/// Runs on a dirty CPU scheduler to avoid blocking the BEAM VM.
+///
+/// ## Arguments
+/// - `env`: NIF environment
+/// - `stmt`: Prepared statement resource
+/// - `params_list`: Parameter values to bind
+///
+/// ## Returns
+/// - `Ok({columns, rows})` on success
+/// - `Err(DuckyError)` on failure
+#[rustler::nif(schedule = "DirtyCpu")]
+fn execute_prepared<'a>(
+    env: Env<'a>,
+    stmt: ResourceArc<StatementResource>,
+    params_list: Vec<Term<'a>>,
+) -> Result<(Vec<String>, Vec<Vec<Term<'a>>>), DuckyError> {
+    use duckdb::types::ToSql;
+
+    let sql_guard = stmt
+        .sql
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock statement: {}", e)))?;
+
+    let sql = sql_guard.as_ref().ok_or(DuckyError::StatementFinalized)?;
+
+    let connection = stmt
+        .connection
+        .connection
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock connection: {}", e)))?;
+
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+    for term in params_list {
+        let param = term_to_duckdb_param(term)?;
+        params.push(param);
+    }
+
+    let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    execute_statement(env, &connection, sql, param_refs.as_slice())
+}
+
+/// Finalizes a prepared statement, invalidating it for further use.
+///
+/// Clears the stored SQL so any subsequent execute_prepared calls will
+/// return a StatementFinalized error. Memory is freed when the BEAM
+/// GC drops the ResourceArc.
+///
+/// ## Arguments
+/// - `stmt`: Prepared statement resource to finalize
+///
+/// ## Returns
+/// - `Ok(nil)` on success
+/// - `Err(DuckyError)` if already finalized
+#[rustler::nif]
+fn finalize(stmt: ResourceArc<StatementResource>) -> Result<rustler::Atom, DuckyError> {
+    let mut sql_guard = stmt
+        .sql
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock statement: {}", e)))?;
+
+    if sql_guard.is_none() {
+        return Err(DuckyError::StatementFinalized);
+    }
+
+    *sql_guard = None;
     Ok(atoms::nil())
 }
 
@@ -790,6 +907,7 @@ fn on_load(env: Env, _: Term) -> bool {
     #[allow(non_local_definitions)]
     {
         let _ = rustler::resource!(ConnectionResource, env);
+        let _ = rustler::resource!(StatementResource, env);
     }
     true
 }

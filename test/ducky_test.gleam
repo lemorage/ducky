@@ -1068,3 +1068,155 @@ pub fn query_union_param_unsupported_test() {
   ])
   |> should.be_error
 }
+
+pub fn prepare_valid_sql_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+
+  ducky.prepare(conn, "SELECT * FROM users WHERE id = ?")
+  |> should.be_ok
+}
+
+pub fn prepare_invalid_sql_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  ducky.prepare(conn, "SELEKT * FROM users")
+  |> should.be_error
+}
+
+pub fn execute_prepared_select_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+  let assert Ok(_) = ducky.query(conn, "INSERT INTO users VALUES (1, 'Alice')")
+  let assert Ok(stmt) =
+    ducky.prepare(conn, "SELECT name FROM users WHERE id = ?")
+
+  let assert Ok(result) = ducky.execute(stmt, [ducky.Integer(1)])
+
+  result.columns |> should.equal(["name"])
+  let assert [ducky.Row([ducky.Text(name)])] = result.rows
+  name |> should.equal("Alice")
+}
+
+pub fn execute_prepared_insert_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+  let assert Ok(stmt) = ducky.prepare(conn, "INSERT INTO users VALUES (?, ?)")
+
+  let assert Ok(_) =
+    ducky.execute(stmt, [ducky.Integer(1), ducky.Text("Alice")])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM users")
+  let assert [ducky.Row([ducky.Integer(1), ducky.Text("Alice")])] = result.rows
+}
+
+pub fn execute_prepared_reuse_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE counters (id INT, value INT)")
+  let assert Ok(stmt) =
+    ducky.prepare(conn, "INSERT INTO counters VALUES (?, ?)")
+
+  list.range(1, 100)
+  |> list.each(fn(i) {
+    let assert Ok(_) =
+      ducky.execute(stmt, [ducky.Integer(i), ducky.Integer(i * 10)])
+    Nil
+  })
+
+  let assert Ok(result) = ducky.query(conn, "SELECT COUNT(*) FROM counters")
+  let assert [ducky.Row([ducky.Integer(count)])] = result.rows
+  count |> should.equal(100)
+}
+
+pub fn execute_prepared_temporal_params_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE events (ts TIMESTAMP, d DATE)")
+  let assert Ok(stmt) = ducky.prepare(conn, "INSERT INTO events VALUES (?, ?)")
+  let micros = 1_705_315_845_000_000
+  let days = 19_738
+
+  let assert Ok(_) =
+    ducky.execute(stmt, [ducky.Timestamp(micros), ducky.Date(days)])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM events")
+  let assert [ducky.Row([ducky.Timestamp(ret_micros), ducky.Date(ret_days)])] =
+    result.rows
+  ret_micros |> should.equal(micros)
+  ret_days |> should.equal(days)
+}
+
+pub fn execute_prepared_decimal_params_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE prices (amount DECIMAL(10,2))")
+  let assert Ok(stmt) = ducky.prepare(conn, "INSERT INTO prices VALUES (?)")
+
+  let assert Ok(_) = ducky.execute(stmt, [ducky.Decimal("1234.56")])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM prices")
+  let assert [ducky.Row([ducky.Decimal(amount)])] = result.rows
+  amount |> should.equal("1234.56")
+}
+
+pub fn finalize_statement_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(stmt) = ducky.prepare(conn, "SELECT 1")
+
+  ducky.finalize(stmt)
+  |> should.be_ok
+}
+
+pub fn finalize_already_finalized_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(stmt) = ducky.prepare(conn, "SELECT 1")
+  let assert Ok(_) = ducky.finalize(stmt)
+
+  ducky.finalize(stmt)
+  |> should.be_error
+}
+
+pub fn execute_after_finalize_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(stmt) = ducky.prepare(conn, "SELECT 1")
+  let assert Ok(_) = ducky.finalize(stmt)
+
+  let result = ducky.execute(stmt, [])
+  result |> should.be_error
+
+  case result {
+    Error(ducky.StatementFinalized) -> True
+    _ -> False
+  }
+  |> should.be_true
+}
+
+pub fn with_statement_success_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE items (id INT, name VARCHAR)")
+
+  let result = {
+    use stmt <- ducky.with_statement(conn, "INSERT INTO items VALUES (?, ?)")
+    ducky.execute(stmt, [ducky.Integer(1), ducky.Text("A")])
+  }
+
+  result |> should.be_ok
+  let assert Ok(check) = ducky.query(conn, "SELECT * FROM items")
+  let assert [ducky.Row([ducky.Integer(1), ducky.Text("A")])] = check.rows
+}
+
+pub fn with_statement_error_still_finalizes_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let result = {
+    use _stmt <- ducky.with_statement(conn, "SELECT 1")
+    Error(ducky.DatabaseError("intentional error"))
+  }
+
+  result |> should.be_error
+}

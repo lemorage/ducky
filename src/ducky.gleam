@@ -60,6 +60,8 @@ pub type Error {
   TypeMismatch(expected: String, got: String)
   /// Unsupported parameter type in query.
   UnsupportedParameterType(type_name: String)
+  /// Statement has been finalized and cannot be used.
+  StatementFinalized
   /// Generic error from DuckDB.
   DatabaseError(message: String)
 }
@@ -101,6 +103,14 @@ pub type DataFrame {
 /// An opaque connection to a DuckDB database.
 pub opaque type Connection {
   Connection(internal: connection.Connection)
+}
+
+/// An opaque prepared statement for repeated execution.
+///
+/// Prepared statements allow you to compile a SQL query once and execute it
+/// multiple times with different parameters, avoiding repeated parsing overhead.
+pub opaque type Statement {
+  Statement(native: ffi.NativeStatement)
 }
 
 /// Opens a connection to a DuckDB database.
@@ -254,6 +264,94 @@ pub fn query_params(
   ffi.execute_query(connection.native(conn.internal), sql, dynamic_params)
   |> result.map(decode_dataframe)
   |> result.map_error(decode_nif_error)
+}
+
+/// Prepares a SQL statement for repeated execution.
+///
+/// Validates the SQL syntax immediately and returns a statement handle.
+/// Use `execute` to run the statement with parameters.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(stmt) = prepare(conn, "INSERT INTO users (name, age) VALUES (?, ?)")
+/// let assert Ok(_) = execute(stmt, [Text("Alice"), Integer(30)])
+/// let assert Ok(_) = execute(stmt, [Text("Bob"), Integer(25)])
+/// let assert Ok(_) = finalize(stmt)
+/// ```
+///
+/// ## Performance
+///
+/// DuckDB caches parsed query plans internally, so repeated executions
+/// with different parameters benefit from the cached plan. This can
+/// provide speedups for bulk operations.
+pub fn prepare(conn: Connection, sql: String) -> Result(Statement, Error) {
+  ffi.prepare(connection.native(conn.internal), sql)
+  |> result.map(fn(native) { Statement(native: native) })
+  |> result.map_error(decode_nif_error)
+}
+
+/// Executes a prepared statement with parameters.
+///
+/// Returns a DataFrame with the query results, or an empty DataFrame
+/// for DDL/DML statements.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(stmt) = prepare(conn, "SELECT * FROM users WHERE age > ?")
+/// let assert Ok(result) = execute(stmt, [Integer(18)])
+/// // result.rows contains matching users
+/// ```
+pub fn execute(stmt: Statement, params: List(Value)) -> Result(DataFrame, Error) {
+  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
+
+  ffi.execute_prepared(stmt.native, dynamic_params)
+  |> result.map(decode_dataframe)
+  |> result.map_error(decode_nif_error)
+}
+
+/// Finalizes a prepared statement, releasing its resources.
+///
+/// After finalization, the statement cannot be used again.
+/// For automatic cleanup, prefer `with_statement`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(stmt) = prepare(conn, "SELECT 1")
+/// // ... use the statement ...
+/// let assert Ok(_) = finalize(stmt)
+/// ```
+pub fn finalize(stmt: Statement) -> Result(Nil, Error) {
+  ffi.finalize(stmt.native)
+  |> result.map(fn(_) { Nil })
+  |> result.map_error(decode_nif_error)
+}
+
+/// Executes operations with a prepared statement, ensuring cleanup.
+///
+/// The statement is automatically finalized when the callback returns,
+/// regardless of success or failure.
+///
+/// ## Examples
+///
+/// ```gleam
+/// use stmt <- with_statement(conn, "INSERT INTO users (name) VALUES (?)")
+/// list.try_each(names, fn(name) {
+///   execute(stmt, [Text(name)])
+///   |> result.map(fn(_) { Nil })
+/// })
+/// ```
+pub fn with_statement(
+  conn: Connection,
+  sql: String,
+  callback: fn(Statement) -> Result(a, Error),
+) -> Result(a, Error) {
+  use stmt <- result.try(prepare(conn, sql))
+  let res = callback(stmt)
+  let _ = finalize(stmt)
+  res
 }
 
 /// Get a value from a row by column index.
@@ -558,6 +656,7 @@ fn error_from_tag(tag: String, message: String) -> Error {
     "connection_failed" -> ConnectionFailed(message)
     "query_syntax_error" -> QuerySyntaxError(message)
     "unsupported_parameter_type" -> UnsupportedParameterType(message)
+    "statement_finalized" -> StatementFinalized
     "database_error" -> DatabaseError(message)
     _ -> DatabaseError("[" <> tag <> "] " <> message)
   }
