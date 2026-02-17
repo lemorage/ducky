@@ -256,6 +256,52 @@ fn finalize(stmt: ResourceArc<StatementResource>) -> Result<rustler::Atom, Ducky
     Ok(atoms::nil())
 }
 
+/// Bulk-appends rows via DuckDB's appender API. Bypasses SQL parsing.
+///
+/// Atomic: all rows are appended and flushed, or none are on error.
+/// Holds the connection lock for the entire operation.
+///
+/// Runs on a dirty CPU scheduler to avoid blocking the BEAM VM.
+///
+/// ## Arguments
+/// - `conn`: Connection resource
+/// - `table`: Table name (catalog lookup, not SQL-interpolated)
+/// - `rows`: List of rows, each a list of values
+///
+/// ## Returns
+/// - `Ok(count)` on success
+/// - `Err(DuckyError)` on failure
+#[rustler::nif(schedule = "DirtyCpu")]
+fn append_rows<'a>(
+    conn: ResourceArc<ConnectionResource>,
+    table: String,
+    rows: Vec<Vec<Term<'a>>>,
+) -> Result<i64, DuckyError> {
+    use duckdb::types::ToSql;
+
+    let connection = conn
+        .connection
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock connection: {}", e)))?;
+
+    let count = rows.len() as i64;
+    let mut app = connection.appender(&table)?;
+
+    for row in &rows {
+        let mut params: Vec<Box<dyn ToSql>> = Vec::with_capacity(row.len());
+        for term in row {
+            let param = term_to_duckdb_param(*term)?;
+            params.push(param);
+        }
+
+        let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        app.append_row(param_refs.as_slice())?;
+    }
+
+    app.flush()?;
+    Ok(count)
+}
+
 /// Executes a SQL query with optional parameter binding.
 ///
 /// Runs on a dirty CPU scheduler to avoid blocking the BEAM VM.

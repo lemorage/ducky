@@ -1220,3 +1220,115 @@ pub fn with_statement_error_still_finalizes_test() {
 
   result |> should.be_error
 }
+
+pub fn append_rows_empty_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE t (id INT)")
+
+  let assert Ok(count) = ducky.append_rows(conn, "t", [])
+  count |> should.equal(0)
+}
+
+pub fn append_rows_simple_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+
+  let assert Ok(count) =
+    ducky.append_rows(conn, "users", [
+      [ducky.Integer(1), ducky.Text("Alice")],
+      [ducky.Integer(2), ducky.Text("Bob")],
+      [ducky.Integer(3), ducky.Text("Charlie")],
+    ])
+
+  count |> should.equal(3)
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM users ORDER BY id")
+  list.length(result.rows) |> should.equal(3)
+
+  let assert [ducky.Row([ducky.Integer(1), ducky.Text("Alice")]), ..] =
+    result.rows
+}
+
+pub fn append_rows_invalid_table_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  ducky.append_rows(conn, "nonexistent_table", [
+    [ducky.Integer(1)],
+  ])
+  |> should.be_error
+}
+
+pub fn append_rows_bulk_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE counters (id INT, value INT)")
+
+  let rows =
+    list.range(1, 1000)
+    |> list.map(fn(i) { [ducky.Integer(i), ducky.Integer(i * 10)] })
+
+  let assert Ok(count) = ducky.append_rows(conn, "counters", rows)
+  count |> should.equal(1000)
+
+  let assert Ok(result) = ducky.query(conn, "SELECT COUNT(*) FROM counters")
+  let assert [ducky.Row([ducky.Integer(count_result)])] = result.rows
+  count_result |> should.equal(1000)
+
+  let assert Ok(sum_result) =
+    ducky.query(conn, "SELECT SUM(value) FROM counters")
+  let assert [ducky.Row([sum_value])] = sum_result.rows
+
+  case sum_value {
+    ducky.BigInt(sum) -> sum |> should.equal(5_005_000)
+    ducky.Integer(sum) -> sum |> should.equal(5_005_000)
+    _ -> panic as "Expected numeric sum"
+  }
+}
+
+pub fn append_rows_with_null_values_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR, age INT)")
+
+  let assert Ok(_) =
+    ducky.append_rows(conn, "users", [
+      [ducky.Integer(1), ducky.Text("Alice"), ducky.Null],
+    ])
+
+  let assert Ok(result) =
+    ducky.query(conn, "SELECT * FROM users WHERE age IS NULL")
+  list.length(result.rows) |> should.equal(1)
+}
+
+pub fn append_rows_type_mismatch_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE numbers (id INT)")
+
+  ducky.append_rows(conn, "numbers", [
+    [ducky.Text("not a number")],
+  ])
+  |> should.be_error
+}
+
+pub fn append_rows_with_temporal_types_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE events (ts TIMESTAMP, d DATE)")
+
+  let micros = 1_705_315_845_000_000
+  let days = 19_738
+
+  let assert Ok(_) =
+    ducky.append_rows(conn, "events", [
+      [ducky.Timestamp(micros), ducky.Date(days)],
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM events")
+  let assert [ducky.Row([ducky.Timestamp(ret_micros), ducky.Date(ret_days)])] =
+    result.rows
+
+  ret_micros |> should.equal(micros)
+  ret_days |> should.equal(days)
+}

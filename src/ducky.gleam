@@ -354,6 +354,40 @@ pub fn with_statement(
   res
 }
 
+/// Bulk-appends rows via DuckDB's appender API. Bypasses SQL parsing.
+///
+/// Atomic: all rows succeed or none are committed on error.
+/// The table name is resolved by catalog lookup, not SQL interpolation.
+/// Empty rows return `Ok(0)` without a NIF call.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(count) = append_rows(conn, "users", [
+///   [Integer(1), Text("Alice")],
+///   [Integer(2), Text("Bob")],
+///   [Integer(3), Text("Charlie")],
+/// ])
+/// // count == 3
+/// ```
+pub fn append_rows(
+  conn: Connection,
+  table: String,
+  rows: List(List(Value)),
+) -> Result(Int, Error) {
+  case rows {
+    [] -> Ok(0)
+    _ -> {
+      use dynamic_rows <- result.try(
+        list.try_map(rows, fn(row) { list.try_map(row, value_to_dynamic) }),
+      )
+
+      ffi.append_rows(connection.native(conn.internal), table, dynamic_rows)
+      |> result.map_error(decode_nif_error)
+    }
+  }
+}
+
 /// Get a value from a row by column index.
 ///
 /// ## Examples

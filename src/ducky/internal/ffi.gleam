@@ -57,6 +57,14 @@ pub fn execute_prepared(
 @external(erlang, "ducky_nif", "finalize")
 pub fn finalize(stmt: NativeStatement) -> Result(Dynamic, Dynamic)
 
+/// Bulk-appends rows via DuckDB's appender API.
+@external(erlang, "ducky_nif", "append_rows")
+pub fn append_rows(
+  conn: NativeConnection,
+  table: String,
+  rows: List(List(Dynamic)),
+) -> Result(Int, Dynamic)
+
 /// Health check to verify NIF is loaded.
 @external(erlang, "ducky_nif", "health_check")
 pub fn health_check() -> String

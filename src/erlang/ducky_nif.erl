@@ -1,5 +1,6 @@
 -module(ducky_nif).
--export([connect/1, close/1, execute_query/3, prepare/2, execute_prepared/2, finalize/1, health_check/0]).
+-export([connect/1, close/1, execute_query/3, prepare/2, execute_prepared/2, finalize/1,
+         append_rows/3, health_check/0]).
 -on_load(init/0).
 
 init() ->
@@ -54,6 +55,9 @@ execute_prepared(_Statement, _Params) ->
     erlang:nif_error(nif_not_loaded).
 
 finalize(_Statement) ->
+    erlang:nif_error(nif_not_loaded).
+
+append_rows(_Connection, _Table, _Rows) ->
     erlang:nif_error(nif_not_loaded).
 
 health_check() ->
