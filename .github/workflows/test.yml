@@ -16,7 +16,6 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-          - os: windows-2022
 
     steps:
       - name: Checkout code
@@ -26,7 +25,7 @@ jobs:
         uses: erlef/setup-beam@v1
         with:
           otp-version: "28"
-          gleam-version: "1.14.0"
+          gleam-version: "1.15.0"
           rebar3-version: "3"
 
       - name: Install Rust toolchain

@@ -141,7 +141,7 @@ jobs:
         run: ls -lh artifacts/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
