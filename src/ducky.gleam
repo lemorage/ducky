@@ -228,8 +228,8 @@ pub fn transaction(
 /// ```
 pub fn query(conn: Connection, sql: String) -> Result(DataFrame, Error) {
   ffi.execute_query(connection.native(conn.internal), sql, [])
-  |> result.map(decode_dataframe)
   |> result.map_error(decode_nif_error)
+  |> result.try(decode_dataframe)
 }
 
 /// Executes a parameterized SQL query with bound parameters to prevent SQL injection.
@@ -262,8 +262,8 @@ pub fn query_params(
   use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
 
   ffi.execute_query(connection.native(conn.internal), sql, dynamic_params)
-  |> result.map(decode_dataframe)
   |> result.map_error(decode_nif_error)
+  |> result.try(decode_dataframe)
 }
 
 /// Prepares a SQL statement for repeated execution.
@@ -307,8 +307,8 @@ pub fn execute(stmt: Statement, params: List(Value)) -> Result(DataFrame, Error)
   use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
 
   ffi.execute_prepared(stmt.native, dynamic_params)
-  |> result.map(decode_dataframe)
   |> result.map_error(decode_nif_error)
+  |> result.try(decode_dataframe)
 }
 
 /// Finalizes a prepared statement, releasing its resources.
@@ -480,22 +480,22 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
 /// Decodes raw NIF result into a DataFrame.
 fn decode_dataframe(
   raw: #(List(String), List(List(dynamic.Dynamic))),
-) -> DataFrame {
+) -> Result(DataFrame, Error) {
   let #(columns, rows) = raw
-  let decoded_rows =
-    rows
-    |> list.map(fn(row) {
-      let values = list.map(row, decode_value)
+  use decoded_rows <- result.try(
+    list.try_map(rows, fn(row) {
+      use values <- result.map(list.try_map(row, decode_value))
       Row(values: values)
-    })
-  DataFrame(columns: columns, rows: decoded_rows)
+    }),
+  )
+  Ok(DataFrame(columns: columns, rows: decoded_rows))
 }
 
 /// Decodes a dynamic value from the NIF into a typed Value.
-fn decode_value(dyn: dynamic.Dynamic) -> Value {
+fn decode_value(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let classification = dynamic.classify(dyn)
   case classification {
-    "Atom" -> Null
+    "Atom" | "Nil" -> Ok(Null)
     "Dict" -> decode_struct(dyn)
     "List" -> decode_list(dyn)
     "Array" -> decode_tagged_tuple(dyn)
@@ -509,47 +509,50 @@ fn decode_value(dyn: dynamic.Dynamic) -> Value {
         ])
 
       decode.run(dyn, value_decoder)
-      |> result.unwrap(or: Null)
+      |> result.map_error(fn(_) {
+        DatabaseError(
+          "Failed to decode value of type: " <> classification,
+        )
+      })
     }
   }
 }
 
 /// Decodes a list with recursive element decoding.
-fn decode_list(dyn: dynamic.Dynamic) -> Value {
+fn decode_list(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let decoder = decode.list(decode.dynamic)
 
   case decode.run(dyn, decoder) {
     Ok(elements) -> {
-      let decoded_elements = list.map(elements, decode_value)
+      use decoded_elements <- result.map(list.try_map(elements, decode_value))
       List(decoded_elements)
     }
-    Error(_) -> Null
+    Error(_) -> Error(DatabaseError("Failed to decode list value"))
   }
 }
 
 /// Decodes an Erlang map into a Struct with recursive value decoding.
-fn decode_struct(dyn: dynamic.Dynamic) -> Value {
-  let decoder =
-    decode.dict(decode.string, decode.dynamic)
-    |> decode.map(fn(fields) {
-      let decoded_fields =
-        fields
-        |> dict.to_list
-        |> list.map(fn(pair) {
+fn decode_struct(dyn: dynamic.Dynamic) -> Result(Value, Error) {
+  let decoder = decode.dict(decode.string, decode.dynamic)
+
+  case decode.run(dyn, decoder) {
+    Ok(fields) -> {
+      let pairs = dict.to_list(fields)
+      use decoded_pairs <- result.map(
+        list.try_map(pairs, fn(pair) {
           let #(key, val) = pair
-          #(key, decode_value(val))
-        })
-        |> dict.from_list
-
-      Struct(decoded_fields)
-    })
-
-  decode.run(dyn, decoder)
-  |> result.unwrap(or: Null)
+          use decoded_val <- result.map(decode_value(val))
+          #(key, decoded_val)
+        }),
+      )
+      Struct(dict.from_list(decoded_pairs))
+    }
+    Error(_) -> Error(DatabaseError("Failed to decode struct value"))
+  }
 }
 
 /// Decodes tagged tuples sent as Erlang arrays for various types.
-fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Value {
+fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let tag_decoder = {
     use tag_dynamic <- decode.subfield([0], decode.dynamic)
     decode.success(tag_dynamic)
@@ -569,42 +572,44 @@ fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Value {
         "union" -> decode_union_value(dyn)
         "timestamp" | "date" | "time" -> decode_temporal_tuple(dyn)
         "interval" -> decode_interval_tuple(dyn)
-        _ -> Null
+        _ ->
+          Error(DatabaseError("Unknown tagged tuple type: " <> tag))
       }
     }
-    Error(_) -> Null
+    Error(_) ->
+      Error(DatabaseError("Failed to decode tagged tuple"))
   }
 }
 
 /// Decodes a decimal tagged tuple {decimal, "string"}.
-fn decode_decimal_value(dyn: dynamic.Dynamic) -> Value {
+fn decode_decimal_value(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let decoder = {
     use value <- decode.subfield([1], decode.string)
     decode.success(value)
   }
   case decode.run(dyn, decoder) {
-    Ok(value) -> Decimal(value)
-    Error(_) -> Null
+    Ok(value) -> Ok(Decimal(value))
+    Error(_) -> Error(DatabaseError("Failed to decode decimal value"))
   }
 }
 
 /// Decodes an array tagged tuple {array, [elements]}.
-fn decode_array_value(dyn: dynamic.Dynamic) -> Value {
+fn decode_array_value(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let decoder = {
     use elements <- decode.subfield([1], decode.list(decode.dynamic))
     decode.success(elements)
   }
   case decode.run(dyn, decoder) {
     Ok(elements) -> {
-      let decoded_elements = list.map(elements, decode_value)
+      use decoded_elements <- result.map(list.try_map(elements, decode_value))
       Array(decoded_elements)
     }
-    Error(_) -> Null
+    Error(_) -> Error(DatabaseError("Failed to decode array value"))
   }
 }
 
 /// Decodes a map tagged tuple {map, %{key => value}}.
-fn decode_map_value(dyn: dynamic.Dynamic) -> Value {
+fn decode_map_value(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let decoder = {
     use entries <- decode.subfield(
       [1],
@@ -614,35 +619,38 @@ fn decode_map_value(dyn: dynamic.Dynamic) -> Value {
   }
   case decode.run(dyn, decoder) {
     Ok(entries) -> {
-      let decoded_entries =
-        entries
-        |> dict.to_list
-        |> list.map(fn(pair) {
+      let pairs = dict.to_list(entries)
+      use decoded_pairs <- result.map(
+        list.try_map(pairs, fn(pair) {
           let #(key, val) = pair
-          #(key, decode_value(val))
-        })
-        |> dict.from_list
-      Map(decoded_entries)
+          use decoded_val <- result.map(decode_value(val))
+          #(key, decoded_val)
+        }),
+      )
+      Map(dict.from_list(decoded_pairs))
     }
-    Error(_) -> Null
+    Error(_) -> Error(DatabaseError("Failed to decode map value"))
   }
 }
 
 /// Decodes a union tagged tuple {union, tag_string, value}.
-fn decode_union_value(dyn: dynamic.Dynamic) -> Value {
+fn decode_union_value(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let decoder = {
     use tag <- decode.subfield([1], decode.string)
     use value <- decode.subfield([2], decode.dynamic)
     decode.success(#(tag, value))
   }
   case decode.run(dyn, decoder) {
-    Ok(#(tag, value)) -> Union(tag: tag, value: decode_value(value))
-    Error(_) -> Null
+    Ok(#(tag, value)) -> {
+      use decoded_value <- result.map(decode_value(value))
+      Union(tag: tag, value: decoded_value)
+    }
+    Error(_) -> Error(DatabaseError("Failed to decode union value"))
   }
 }
 
 /// Decodes temporal tagged tuples (timestamp, date, time).
-fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Value {
+fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let decoder = {
     use tag_dynamic <- decode.subfield([0], decode.dynamic)
     use value <- decode.subfield([1], decode.int)
@@ -661,17 +669,18 @@ fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Value {
   case decode.run(dyn, decoder) {
     Ok(#(tag, value)) ->
       case tag {
-        "timestamp" -> Timestamp(value)
-        "date" -> Date(value)
-        "time" -> Time(value)
-        _ -> Null
+        "timestamp" -> Ok(Timestamp(value))
+        "date" -> Ok(Date(value))
+        "time" -> Ok(Time(value))
+        _ ->
+          Error(DatabaseError("Unknown temporal type: " <> tag))
       }
-    Error(_) -> Null
+    Error(_) -> Error(DatabaseError("Failed to decode temporal value"))
   }
 }
 
 /// Decodes interval 4-tuple {interval, months, days, nanos}.
-fn decode_interval_tuple(dyn: dynamic.Dynamic) -> Value {
+fn decode_interval_tuple(dyn: dynamic.Dynamic) -> Result(Value, Error) {
   let decoder = {
     use months <- decode.subfield([1], decode.int)
     use days <- decode.subfield([2], decode.int)
@@ -680,8 +689,8 @@ fn decode_interval_tuple(dyn: dynamic.Dynamic) -> Value {
   }
 
   case decode.run(dyn, decoder) {
-    Ok(#(months, days, nanos)) -> Interval(months, days, nanos)
-    Error(_) -> Null
+    Ok(#(months, days, nanos)) -> Ok(Interval(months, days, nanos))
+    Error(_) -> Error(DatabaseError("Failed to decode interval value"))
   }
 }
 
