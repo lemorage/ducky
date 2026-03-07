@@ -54,10 +54,6 @@ pub type Error {
   ConnectionFailed(reason: String)
   /// SQL query has syntax errors.
   QuerySyntaxError(message: String)
-  /// Operation timed out.
-  Timeout(duration_ms: Int)
-  /// Type conversion failed.
-  TypeMismatch(expected: String, got: String)
   /// Unsupported parameter type in query.
   UnsupportedParameterType(type_name: String)
   /// Statement has been finalized and cannot be used.
