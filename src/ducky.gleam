@@ -167,6 +167,7 @@ pub fn with_connection(
 ) -> Result(a, Error) {
   use conn <- result.try(connect(db_path))
   let res = callback(conn)
+  // Intentionally ignore close errors to preserve the callback result
   let _ = close(conn)
   res
 }
@@ -201,6 +202,7 @@ pub fn transaction(
       Ok(value)
     }
     Error(err) -> {
+      // Intentionally ignore rollback errors to preserve the original error
       let _ = connection.execute_raw(conn.internal, "ROLLBACK")
       Error(err)
     }
@@ -346,6 +348,7 @@ pub fn with_statement(
 ) -> Result(a, Error) {
   use stmt <- result.try(prepare(conn, sql))
   let res = callback(stmt)
+  // Intentionally ignore finalize errors to preserve the callback result
   let _ = finalize(stmt)
   res
 }
@@ -466,10 +469,11 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     Interval(months, days, nanos) ->
       Ok(make_interval_tuple(months, days, nanos))
     Decimal(s) -> Ok(make_tagged("decimal", dynamic.string(s)))
-    List(_) | Array(_) | Map(_) | Struct(_) | Union(_, _) ->
-      Error(UnsupportedParameterType(
-        "List, Array, Map, Struct, and Union types cannot be used as query parameters",
-      ))
+    List(_) -> Error(UnsupportedParameterType("List"))
+    Array(_) -> Error(UnsupportedParameterType("Array"))
+    Map(_) -> Error(UnsupportedParameterType("Map"))
+    Struct(_) -> Error(UnsupportedParameterType("Struct"))
+    Union(_, _) -> Error(UnsupportedParameterType("Union"))
   }
 }
 
