@@ -12,13 +12,18 @@ pub fn main() {
 }
 
 pub fn connect_memory_database_test() {
-  ducky.connect(":memory:")
-  |> should.be_ok
+  let assert Ok(conn) = ducky.connect(":memory:")
+  ducky.path(conn) |> should.equal(":memory:")
 }
 
 pub fn connect_empty_path_test() {
   ducky.connect("")
   |> should.be_error
+}
+
+pub fn path_memory_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  ducky.path(conn) |> should.equal(":memory:")
 }
 
 pub fn close_connection_test() {
@@ -47,8 +52,9 @@ pub fn query_select_simple_test() {
 
 pub fn query_create_table_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
-  ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
-  |> should.be_ok
+  let assert Ok(result) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+  result.rows |> should.equal([])
 }
 
 pub fn query_insert_and_select_test() {
@@ -98,7 +104,6 @@ pub fn query_params_insert_test() {
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
 
-  // Insert with parameters
   let assert Ok(_) =
     ducky.query_params(conn, "INSERT INTO users VALUES (?, ?)", [
       ducky.Integer(42),
@@ -106,10 +111,7 @@ pub fn query_params_insert_test() {
     ])
 
   let assert Ok(result) = ducky.query(conn, "SELECT * FROM users")
-
-  result.rows
-  |> list.length
-  |> should.equal(1)
+  let assert [ducky.Row([ducky.Integer(42), ducky.Text("Eve")])] = result.rows
 }
 
 pub fn query_params_null_test() {
@@ -161,12 +163,15 @@ pub fn with_connection_error_still_closes_test() {
   let result =
     ducky.with_connection(":memory:", fn(conn) {
       use _created <- result.try(ducky.query(conn, "CREATE TABLE test (id INT)"))
-      // Invalid SQL should return error
       ducky.query(conn, "SELEKT * FROM test")
     })
 
-  result
-  |> should.be_error
+  case result {
+    Error(ducky.QuerySyntaxError(_)) -> True
+    Error(ducky.DatabaseError(_)) -> True
+    _ -> False
+  }
+  |> should.be_true
 }
 
 pub fn transaction_commit_on_success_test() {
@@ -475,6 +480,30 @@ pub fn query_null_temporal_test() {
   |> should.equal(ducky.Null)
 }
 
+// TODO: Blob columns return as List(Integer) due to Rustler encoding &[u8]
+// as an Erlang list instead of binary. Fix in NIF with OwnedBinary.
+pub fn query_blob_returns_as_list_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE t (data BLOB)")
+  let assert Ok(_) =
+    ducky.query(conn, "INSERT INTO t VALUES ('hello'::BLOB)")
+  let assert Ok(result) = ducky.query(conn, "SELECT data FROM t")
+  let assert [ducky.Row([ducky.List(bytes)])] = result.rows
+  list.length(bytes) |> should.equal(5)
+}
+
+pub fn query_float_real_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(result) = ducky.query(conn, "SELECT 3.14::REAL as f")
+  let assert [ducky.Row([value])] = result.rows
+  // REAL (f32) and DOUBLE (f64) both arrive as Erlang floats
+  case value {
+    ducky.Float(f) -> should.be_true(f >. 3.0 && f <. 4.0)
+    ducky.Double(f) -> should.be_true(f >. 3.0 && f <. 4.0)
+    _ -> panic as "Expected float value"
+  }
+}
+
 pub fn query_simple_list_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(result) = ducky.query(conn, "SELECT [1, 2, 3, 4, 5] as nums")
@@ -700,11 +729,11 @@ pub fn query_params_list_unsupported_test() {
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE data (id INT, items INT[])")
 
-  ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
-    ducky.Integer(1),
-    ducky.List([ducky.Integer(1), ducky.Integer(2)]),
-  ])
-  |> should.be_error
+  let assert Error(ducky.UnsupportedParameterType("List")) =
+    ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
+      ducky.Integer(1),
+      ducky.List([ducky.Integer(1), ducky.Integer(2)]),
+    ])
 }
 
 pub fn query_params_struct_unsupported_test() {
@@ -712,11 +741,11 @@ pub fn query_params_struct_unsupported_test() {
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE data (id INT, metadata STRUCT(x INT))")
 
-  ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
-    ducky.Integer(1),
-    ducky.Struct(dict.from_list([#("x", ducky.Integer(10))])),
-  ])
-  |> should.be_error
+  let assert Error(ducky.UnsupportedParameterType("Struct")) =
+    ducky.query_params(conn, "INSERT INTO data VALUES (?, ?)", [
+      ducky.Integer(1),
+      ducky.Struct(dict.from_list([#("x", ducky.Integer(10))])),
+    ])
 }
 
 pub fn error_connection_failed_type_test() {
@@ -772,19 +801,11 @@ pub fn error_query_syntax_clean_message_test() {
 
 pub fn error_unsupported_param_type_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
-  let result =
+
+  let assert Error(ducky.UnsupportedParameterType("List")) =
     ducky.query_params(conn, "SELECT ?", [
       ducky.List([ducky.Integer(1), ducky.Integer(2)]),
     ])
-
-  case result {
-    Error(ducky.UnsupportedParameterType(msg)) -> {
-      // Message should describe the unsupported types
-      string.contains(msg, "List")
-      |> should.be_true
-    }
-    _ -> panic as "Expected UnsupportedParameterType error"
-  }
 }
 
 pub fn query_params_decimal_test() {
@@ -1063,10 +1084,10 @@ pub fn query_union_multiple_types_test() {
 pub fn query_union_param_unsupported_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
 
-  ducky.query_params(conn, "SELECT ?", [
-    ducky.Union("tag", ducky.Integer(42)),
-  ])
-  |> should.be_error
+  let assert Error(ducky.UnsupportedParameterType("Union")) =
+    ducky.query_params(conn, "SELECT ?", [
+      ducky.Union("tag", ducky.Integer(42)),
+    ])
 }
 
 pub fn prepare_valid_sql_test() {
@@ -1074,15 +1095,20 @@ pub fn prepare_valid_sql_test() {
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
 
-  ducky.prepare(conn, "SELECT * FROM users WHERE id = ?")
-  |> should.be_ok
+  let assert Ok(stmt) =
+    ducky.prepare(conn, "SELECT * FROM users WHERE id = ?")
+  let assert Ok(_) = ducky.finalize(stmt)
 }
 
 pub fn prepare_invalid_sql_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
 
-  ducky.prepare(conn, "SELEKT * FROM users")
-  |> should.be_error
+  case ducky.prepare(conn, "SELEKT * FROM users") {
+    Error(ducky.QuerySyntaxError(_)) -> True
+    Error(ducky.DatabaseError(_)) -> True
+    _ -> False
+  }
+  |> should.be_true
 }
 
 pub fn execute_prepared_select_test() {
@@ -1218,7 +1244,7 @@ pub fn with_statement_error_still_finalizes_test() {
     Error(ducky.DatabaseError("intentional error"))
   }
 
-  result |> should.be_error
+  let assert Error(ducky.DatabaseError("intentional error")) = result
 }
 
 pub fn append_rows_empty_test() {
@@ -1253,10 +1279,10 @@ pub fn append_rows_simple_test() {
 pub fn append_rows_invalid_table_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
 
-  ducky.append_rows(conn, "nonexistent_table", [
-    [ducky.Integer(1)],
-  ])
-  |> should.be_error
+  let assert Error(ducky.DatabaseError(_)) =
+    ducky.append_rows(conn, "nonexistent_table", [
+      [ducky.Integer(1)],
+    ])
 }
 
 pub fn append_rows_bulk_test() {
@@ -1306,10 +1332,10 @@ pub fn append_rows_type_mismatch_test() {
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE numbers (id INT)")
 
-  ducky.append_rows(conn, "numbers", [
-    [ducky.Text("not a number")],
-  ])
-  |> should.be_error
+  let assert Error(ducky.DatabaseError(_)) =
+    ducky.append_rows(conn, "numbers", [
+      [ducky.Text("not a number")],
+    ])
 }
 
 pub fn append_rows_with_temporal_types_test() {
@@ -1331,4 +1357,14 @@ pub fn append_rows_with_temporal_types_test() {
 
   ret_micros |> should.equal(micros)
   ret_days |> should.equal(days)
+}
+
+pub fn append_rows_wrong_column_count_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE t (a INT, b INT)")
+
+  let assert Error(ducky.DatabaseError(_)) =
+    ducky.append_rows(conn, "t", [
+      [ducky.Integer(1)],
+    ])
 }
