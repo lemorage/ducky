@@ -480,16 +480,17 @@ pub fn query_null_temporal_test() {
   |> should.equal(ducky.Null)
 }
 
-// TODO: Blob columns return as List(Integer) due to Rustler encoding &[u8]
-// as an Erlang list instead of binary. Fix in NIF with OwnedBinary.
-pub fn query_blob_returns_as_list_test() {
+pub fn query_blob_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(_) = ducky.query(conn, "CREATE TABLE t (data BLOB)")
+  // Use non-UTF8 binary data to ensure Blob path (not Text)
   let assert Ok(_) =
-    ducky.query(conn, "INSERT INTO t VALUES ('hello'::BLOB)")
+    ducky.query_params(conn, "INSERT INTO t VALUES (?)", [
+      ducky.Blob(<<0, 1, 2, 255, 254>>),
+    ])
   let assert Ok(result) = ducky.query(conn, "SELECT data FROM t")
-  let assert [ducky.Row([ducky.List(bytes)])] = result.rows
-  list.length(bytes) |> should.equal(5)
+  let assert [ducky.Row([ducky.Blob(bits)])] = result.rows
+  should.equal(bits, <<0, 1, 2, 255, 254>>)
 }
 
 pub fn query_float_real_test() {
@@ -1095,8 +1096,7 @@ pub fn prepare_valid_sql_test() {
   let assert Ok(_) =
     ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
 
-  let assert Ok(stmt) =
-    ducky.prepare(conn, "SELECT * FROM users WHERE id = ?")
+  let assert Ok(stmt) = ducky.prepare(conn, "SELECT * FROM users WHERE id = ?")
   let assert Ok(_) = ducky.finalize(stmt)
 }
 
@@ -1329,8 +1329,7 @@ pub fn append_rows_with_null_values_test() {
 
 pub fn append_rows_type_mismatch_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
-  let assert Ok(_) =
-    ducky.query(conn, "CREATE TABLE numbers (id INT)")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE numbers (id INT)")
 
   let assert Error(ducky.DatabaseError(_)) =
     ducky.append_rows(conn, "numbers", [

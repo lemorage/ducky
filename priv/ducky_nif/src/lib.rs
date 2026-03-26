@@ -8,7 +8,7 @@ use duckdb::{
     arrow::array::Array,
     types::{TimeUnit, Value, ValueRef},
 };
-use rustler::{Encoder, Env, NifResult, ResourceArc, Term};
+use rustler::{Encoder, Env, NewBinary, NifResult, ResourceArc, Term};
 use std::sync::Mutex;
 
 /// Microseconds per second.
@@ -400,7 +400,11 @@ fn value_to_term<'a, 'b>(env: Env<'a>, value: ValueRef<'b>) -> NifResult<Term<'a
                 .map_err(|_| rustler::Error::Term(Box::new("Invalid UTF-8")))?;
             Ok(text.encode(env))
         }
-        ValueRef::Blob(b) => Ok(b.encode(env)),
+        ValueRef::Blob(b) => {
+            let mut bin = NewBinary::new(env, b.len());
+            bin.as_mut_slice().copy_from_slice(b);
+            Ok(bin.into())
+        }
         ValueRef::Timestamp(time_unit, value) => {
             let micros = normalize_to_micros(time_unit, value);
             Ok((atoms::timestamp(), micros).encode(env))
@@ -935,6 +939,10 @@ fn term_to_duckdb_param(term: Term) -> Result<Box<dyn duckdb::types::ToSql>, Duc
 
     if let Ok(s) = term.decode::<String>() {
         return Ok(Box::new(s));
+    }
+
+    if let Ok(bin) = term.decode::<rustler::Binary>() {
+        return Ok(Box::new(bin.as_slice().to_vec()));
     }
 
     Err(DuckyError::UnsupportedParameterType(

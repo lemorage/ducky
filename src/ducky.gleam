@@ -510,9 +510,7 @@ fn decode_value(dyn: dynamic.Dynamic) -> Result(Value, Error) {
 
       decode.run(dyn, value_decoder)
       |> result.map_error(fn(_) {
-        DatabaseError(
-          "Failed to decode value of type: " <> classification,
-        )
+        DatabaseError("Failed to decode value of type: " <> classification)
       })
     }
   }
@@ -572,12 +570,10 @@ fn decode_tagged_tuple(dyn: dynamic.Dynamic) -> Result(Value, Error) {
         "union" -> decode_union_value(dyn)
         "timestamp" | "date" | "time" -> decode_temporal_tuple(dyn)
         "interval" -> decode_interval_tuple(dyn)
-        _ ->
-          Error(DatabaseError("Unknown tagged tuple type: " <> tag))
+        _ -> Error(DatabaseError("Unknown tagged tuple type: " <> tag))
       }
     }
-    Error(_) ->
-      Error(DatabaseError("Failed to decode tagged tuple"))
+    Error(_) -> Error(DatabaseError("Failed to decode tagged tuple"))
   }
 }
 
@@ -672,8 +668,7 @@ fn decode_temporal_tuple(dyn: dynamic.Dynamic) -> Result(Value, Error) {
         "timestamp" -> Ok(Timestamp(value))
         "date" -> Ok(Date(value))
         "time" -> Ok(Time(value))
-        _ ->
-          Error(DatabaseError("Unknown temporal type: " <> tag))
+        _ -> Error(DatabaseError("Unknown temporal type: " <> tag))
       }
     Error(_) -> Error(DatabaseError("Failed to decode temporal value"))
   }
