@@ -209,6 +209,26 @@ pub fn transaction(
   }
 }
 
+/// Executes a SQL statement that returns no rows.
+///
+/// Use for DDL and DML statements (CREATE, INSERT, UPDATE, DELETE, etc.).
+/// For statements that return rows, use `query` or `query_params`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// exec(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+/// // => Ok(Nil)
+///
+/// exec(conn, "INSERT INTO users VALUES (1, 'Alice')")
+/// // => Ok(Nil)
+/// ```
+pub fn exec(conn: Connection, sql: String) -> Result(Nil, Error) {
+  ffi.execute_query(connection.native(conn.internal), sql, [])
+  |> result.map_error(decode_nif_error)
+  |> result.replace(Nil)
+}
+
 /// Executes a SQL query and returns structured results.
 ///
 /// The query runs on a dirty scheduler to avoid blocking the BEAM.

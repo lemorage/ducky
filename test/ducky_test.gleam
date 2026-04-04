@@ -38,6 +38,34 @@ pub fn query_empty_sql_test() {
   |> should.be_error
 }
 
+pub fn exec_create_table_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) = ducky.exec(conn, "CREATE TABLE t (id INT)")
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  result.rows |> should.equal([])
+}
+
+pub fn exec_insert_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) = ducky.exec(conn, "CREATE TABLE t (id INT)")
+  let assert Ok(Nil) = ducky.exec(conn, "INSERT INTO t VALUES (1), (2)")
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t ORDER BY id")
+  list.length(result.rows) |> should.equal(2)
+}
+
+pub fn exec_invalid_sql_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  case ducky.exec(conn, "SELEKT") {
+    Error(ducky.QuerySyntaxError(_)) -> True
+    Error(ducky.DatabaseError(_)) -> True
+    _ -> False
+  }
+  |> should.be_true
+}
+
 pub fn query_select_simple_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(result) =
