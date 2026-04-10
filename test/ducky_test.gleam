@@ -66,6 +66,123 @@ pub fn exec_invalid_sql_test() {
   |> should.be_true
 }
 
+pub fn param_constructors_roundtrip_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) =
+    ducky.exec(conn, "CREATE TABLE t (i INT, f DOUBLE, s VARCHAR, b BOOLEAN)")
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO t VALUES (?, ?, ?, ?)", [
+      ducky.int(42),
+      ducky.float(3.14),
+      ducky.text("hello"),
+      ducky.bool(True),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  let assert [
+    ducky.Row([
+      ducky.Integer(42),
+      ducky.Double(f),
+      ducky.Text("hello"),
+      ducky.Boolean(True),
+    ]),
+  ] = result.rows
+
+  should.be_true(f >. 3.0 && f <. 4.0)
+}
+
+pub fn param_null_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) = ducky.exec(conn, "CREATE TABLE t (v INT)")
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO t VALUES (?)", [ducky.null()])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  let assert [ducky.Row([ducky.Null])] = result.rows
+}
+
+pub fn param_nullable_some_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) = ducky.exec(conn, "CREATE TABLE t (v INT)")
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO t VALUES (?)", [
+      ducky.nullable(ducky.int, option.Some(42)),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  let assert [ducky.Row([ducky.Integer(42)])] = result.rows
+}
+
+pub fn param_nullable_none_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) = ducky.exec(conn, "CREATE TABLE t (v INT)")
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO t VALUES (?)", [
+      ducky.nullable(ducky.int, option.None),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  let assert [ducky.Row([ducky.Null])] = result.rows
+}
+
+pub fn param_temporal_constructors_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) =
+    ducky.exec(conn, "CREATE TABLE t (ts TIMESTAMP, d DATE, t TIME)")
+
+  let micros = 1_705_315_845_000_000
+  let days = 19_738
+  let time_micros = 43_200_000_000
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO t VALUES (?, ?, ?)", [
+      ducky.timestamp(micros),
+      ducky.date(days),
+      ducky.time(time_micros),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  let assert [
+    ducky.Row([ducky.Timestamp(ret_ts), ducky.Date(ret_d), ducky.Time(ret_t)]),
+  ] = result.rows
+
+  ret_ts |> should.equal(micros)
+  ret_d |> should.equal(days)
+  ret_t |> should.equal(time_micros)
+}
+
+pub fn param_decimal_constructor_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) = ducky.exec(conn, "CREATE TABLE t (v DECIMAL(18,6))")
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO t VALUES (?)", [
+      ducky.decimal("123.456789"),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  let assert [ducky.Row([ducky.Decimal(d)])] = result.rows
+  string.contains(d, "123.456") |> should.be_true
+}
+
+pub fn param_interval_constructor_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(Nil) = ducky.exec(conn, "CREATE TABLE t (v INTERVAL)")
+
+  let assert Ok(_) =
+    ducky.query_params(conn, "INSERT INTO t VALUES (?)", [
+      ducky.interval(months: 1, days: 2, nanos: 10_800_000_000_000),
+    ])
+
+  let assert Ok(result) = ducky.query(conn, "SELECT * FROM t")
+  let assert [ducky.Row([ducky.Interval(1, 2, nanos)])] = result.rows
+  nanos |> should.equal(10_800_000_000_000)
+}
+
 pub fn query_select_simple_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(result) =

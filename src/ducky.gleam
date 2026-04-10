@@ -446,6 +446,79 @@ pub fn field(value: Value, name: String) -> Option(Value) {
   }
 }
 
+/// Creates an integer parameter value.
+pub fn int(value: Int) -> Value {
+  Integer(value)
+}
+
+/// Creates a float parameter value.
+pub fn float(value: Float) -> Value {
+  Double(value)
+}
+
+/// Creates a text parameter value.
+pub fn text(value: String) -> Value {
+  Text(value)
+}
+
+/// Creates a blob parameter value.
+pub fn blob(value: BitArray) -> Value {
+  Blob(value)
+}
+
+/// Creates a boolean parameter value.
+pub fn bool(value: Bool) -> Value {
+  Boolean(value)
+}
+
+/// Creates a null parameter value.
+pub fn null() -> Value {
+  Null
+}
+
+/// Creates a nullable parameter value.
+///
+/// ## Examples
+///
+/// ```gleam
+/// nullable(int, Some(42))
+/// // => Integer(42)
+///
+/// nullable(int, None)
+/// // => Null
+/// ```
+pub fn nullable(inner: fn(a) -> Value, value: Option(a)) -> Value {
+  case value {
+    option.Some(v) -> inner(v)
+    option.None -> Null
+  }
+}
+
+/// Creates a timestamp parameter value (microseconds since Unix epoch).
+pub fn timestamp(micros: Int) -> Value {
+  Timestamp(micros)
+}
+
+/// Creates a date parameter value (days since Unix epoch).
+pub fn date(days: Int) -> Value {
+  Date(days)
+}
+
+/// Creates a time parameter value (microseconds since midnight).
+pub fn time(micros: Int) -> Value {
+  Time(micros)
+}
+
+/// Creates an interval parameter value.
+pub fn interval(months months: Int, days days: Int, nanos nanos: Int) -> Value {
+  Interval(months, days, nanos)
+}
+
+/// Creates a decimal parameter value from a string representation.
+pub fn decimal(value: String) -> Value {
+  Decimal(value)
+}
+
 fn list_at(items: List(a), index: Int) -> Option(a) {
   case items, index {
     [], _ -> option.None
