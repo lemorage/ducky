@@ -10,7 +10,7 @@ pub fn main() {
   let result =
     ducky.with_connection(":memory:", fn(conn) {
       // Create table
-      use _ <- result.try(ducky.query(
+      use _ <- result.try(ducky.exec(
         conn,
         "CREATE TABLE products (id INT, name VARCHAR)",
       ))
@@ -18,8 +18,8 @@ pub fn main() {
       // Insert data
       use _ <- result.try(
         ducky.query_params(conn, "INSERT INTO products VALUES (?, ?)", [
-          ducky.Integer(1),
-          ducky.Text("Widget"),
+          ducky.int(1),
+          ducky.text("Widget"),
         ]),
       )
 
@@ -36,7 +36,7 @@ pub fn main() {
   // Connection closes even on error
   let error_case =
     ducky.with_connection(":memory:", fn(conn) {
-      use _ <- result.try(ducky.query(conn, "CREATE TABLE test (id INT)"))
+      use _ <- result.try(ducky.exec(conn, "CREATE TABLE test (id INT)"))
       ducky.query(conn, "INVALID SQL")
     })
 

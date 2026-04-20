@@ -11,13 +11,13 @@ pub fn main() {
     use conn <- result.try(ducky.connect(":memory:"))
 
     // Create table
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "CREATE TABLE users (id INT, name VARCHAR, age INT)",
     ))
 
     // Insert data
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "INSERT INTO users VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)",
     ))

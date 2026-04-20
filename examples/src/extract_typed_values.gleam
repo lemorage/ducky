@@ -13,13 +13,13 @@ pub fn main() {
     use conn <- result.try(ducky.connect(":memory:"))
 
     // Create table
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "CREATE TABLE products (id INT, name VARCHAR, price FLOAT, active BOOL)",
     ))
 
     // Insert data
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "INSERT INTO products VALUES (1, 'Widget', 19.99, true), (2, 'Gadget', 29.99, false)",
     ))

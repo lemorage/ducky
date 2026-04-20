@@ -11,7 +11,7 @@ pub fn main() {
     use conn <- result.try(ducky.connect(":memory:"))
 
     // Create table
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "CREATE TABLE users (id INT, name VARCHAR, active BOOL)",
     ))
@@ -19,9 +19,9 @@ pub fn main() {
     // Insert with parameters
     use _ <- result.try(
       ducky.query_params(conn, "INSERT INTO users VALUES (?, ?, ?)", [
-        ducky.Integer(1),
-        ducky.Text("Alice"),
-        ducky.Boolean(True),
+        ducky.int(1),
+        ducky.text("Alice"),
+        ducky.bool(True),
       ]),
     )
 
@@ -29,16 +29,16 @@ pub fn main() {
     let user_input = "Alice"
     use df <- result.try(
       ducky.query_params(conn, "SELECT * FROM users WHERE name = ?", [
-        ducky.Text(user_input),
+        ducky.text(user_input),
       ]),
     )
 
     // NULL values
     use _ <- result.try(
       ducky.query_params(conn, "INSERT INTO users VALUES (?, ?, ?)", [
-        ducky.Integer(2),
-        ducky.Null,
-        ducky.Boolean(False),
+        ducky.int(2),
+        ducky.null(),
+        ducky.bool(False),
       ]),
     )
 

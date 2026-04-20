@@ -11,13 +11,13 @@ pub fn main() {
     use conn <- result.try(ducky.connect(":memory:"))
 
     // Create table
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "CREATE TABLE accounts (id INT, balance INT)",
     ))
 
     // Insert data
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "INSERT INTO accounts VALUES (1, 1000), (2, 500)",
     ))
@@ -29,14 +29,14 @@ pub fn main() {
           ducky.query_params(
             conn,
             "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-            [ducky.Integer(200), ducky.Integer(1)],
+            [ducky.int(200), ducky.int(1)],
           ),
         )
 
         ducky.query_params(
           conn,
           "UPDATE accounts SET balance = balance + ? WHERE id = ?",
-          [ducky.Integer(200), ducky.Integer(2)],
+          [ducky.int(200), ducky.int(2)],
         )
       })
 
@@ -49,7 +49,7 @@ pub fn main() {
           ducky.query_params(
             conn,
             "UPDATE accounts SET balance = balance - ? WHERE id = ?",
-            [ducky.Integer(100), ducky.Integer(1)],
+            [ducky.int(100), ducky.int(1)],
           ),
         )
 

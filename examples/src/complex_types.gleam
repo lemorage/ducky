@@ -65,30 +65,30 @@ pub fn main() {
     ))
 
     // Temporal parameter binding
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "CREATE TABLE events (id INT, ts TIMESTAMP, d DATE, t TIME, dur INTERVAL)",
     ))
 
     use _ <- result.try(
       ducky.query_params(conn, "INSERT INTO events VALUES (?, ?, ?, ?, ?)", [
-        ducky.Integer(1),
-        ducky.Timestamp(1_704_067_200_000_000),
-        ducky.Date(19_723),
-        ducky.Time(43_200_000_000),
-        ducky.Interval(0, 7, 0),
+        ducky.int(1),
+        ducky.timestamp(1_704_067_200_000_000),
+        ducky.date(19_723),
+        ducky.time(43_200_000_000),
+        ducky.interval(months: 0, days: 7, nanos: 0),
       ]),
     )
 
     // Decimal parameter binding
-    use _ <- result.try(ducky.query(
+    use _ <- result.try(ducky.exec(
       conn,
       "CREATE TABLE prices (amount DECIMAL(18,2))",
     ))
 
     use _ <- result.try(
       ducky.query_params(conn, "INSERT INTO prices VALUES (?)", [
-        ducky.Decimal("99999.99"),
+        ducky.decimal("99999.99"),
       ]),
     )
 

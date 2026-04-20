@@ -6,28 +6,29 @@
 //// import ducky
 //// import gleam/int
 //// import gleam/io
+//// import gleam/result
 ////
 //// pub fn main() {
 ////   use conn <- ducky.with_connection(":memory:")
 ////
 ////   // Create our duck pond
-////   let assert Ok(_) = ducky.query(conn, "
+////   use _ <- result.try(ducky.exec(conn, "
 ////     CREATE TABLE ducks (name TEXT, quack_volume INT, is_rubber BOOLEAN)
-////   ")
-////   let assert Ok(_) = ducky.query(conn, "
+////   "))
+////   use _ <- result.try(ducky.exec(conn, "
 ////     INSERT INTO ducks VALUES
 ////       ('Sir Quacksalot', 95, false),
 ////       ('Duck Norris', 100, false),
 ////       ('Mallard Fillmore', 72, false),
 ////       ('Squeaky', 0, true)
-////   ")
+////   "))
 ////
 ////   // Find the loudest quacker
-////   let assert Ok(result) = ducky.query(conn, "
+////   use result <- result.map(ducky.query(conn, "
 ////     SELECT name, quack_volume FROM ducks
 ////     WHERE is_rubber = false
 ////     ORDER BY quack_volume DESC LIMIT 1
-////   ")
+////   "))
 ////
 ////   case result.rows {
 ////     [ducky.Row([ducky.Text(name), ducky.Integer(volume)])] ->
@@ -256,8 +257,8 @@ pub fn query(conn: Connection, sql: String) -> Result(DataFrame, Error) {
 ///
 /// ```gleam
 /// query_params(conn, "SELECT * FROM users WHERE id = ? AND age > ?", [
-///   Integer(42),
-///   Integer(18),
+///   int(42),
+///   int(18),
 /// ])
 /// // => Ok(DataFrame(...))
 /// ```
@@ -270,7 +271,7 @@ pub fn query(conn: Connection, sql: String) -> Result(DataFrame, Error) {
 /// query(conn, "SELECT * FROM users WHERE name = '" <> user_input <> "'")
 ///
 /// // SAFE - parameters are properly escaped
-/// query_params(conn, "SELECT * FROM users WHERE name = ?", [Text(user_input)])
+/// query_params(conn, "SELECT * FROM users WHERE name = ?", [text(user_input)])
 /// ```
 pub fn query_params(
   conn: Connection,
@@ -293,8 +294,8 @@ pub fn query_params(
 ///
 /// ```gleam
 /// let assert Ok(stmt) = prepare(conn, "INSERT INTO users (name, age) VALUES (?, ?)")
-/// let assert Ok(_) = execute(stmt, [Text("Alice"), Integer(30)])
-/// let assert Ok(_) = execute(stmt, [Text("Bob"), Integer(25)])
+/// let assert Ok(_) = execute(stmt, [text("Alice"), int(30)])
+/// let assert Ok(_) = execute(stmt, [text("Bob"), int(25)])
 /// let assert Ok(_) = finalize(stmt)
 /// ```
 ///
@@ -318,7 +319,7 @@ pub fn prepare(conn: Connection, sql: String) -> Result(Statement, Error) {
 ///
 /// ```gleam
 /// let assert Ok(stmt) = prepare(conn, "SELECT * FROM users WHERE age > ?")
-/// let assert Ok(result) = execute(stmt, [Integer(18)])
+/// let assert Ok(result) = execute(stmt, [int(18)])
 /// // result.rows contains matching users
 /// ```
 pub fn execute(stmt: Statement, params: List(Value)) -> Result(DataFrame, Error) {
@@ -357,7 +358,7 @@ pub fn finalize(stmt: Statement) -> Result(Nil, Error) {
 /// ```gleam
 /// use stmt <- with_statement(conn, "INSERT INTO users (name) VALUES (?)")
 /// list.try_each(names, fn(name) {
-///   execute(stmt, [Text(name)])
+///   execute(stmt, [text(name)])
 ///   |> result.map(fn(_) { Nil })
 /// })
 /// ```
@@ -383,9 +384,9 @@ pub fn with_statement(
 ///
 /// ```gleam
 /// let assert Ok(count) = append_rows(conn, "users", [
-///   [Integer(1), Text("Alice")],
-///   [Integer(2), Text("Bob")],
-///   [Integer(3), Text("Charlie")],
+///   [int(1), text("Alice")],
+///   [int(2), text("Bob")],
+///   [int(3), text("Charlie")],
 /// ])
 /// // count == 3
 /// ```

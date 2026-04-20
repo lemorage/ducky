@@ -17,28 +17,29 @@ gleam add ducky
 import ducky
 import gleam/int
 import gleam/io
+import gleam/result
 
 pub fn main() {
   use conn <- ducky.with_connection(":memory:")
 
   // Create our duck pond
-  let assert Ok(_) = ducky.query(conn, "
+  use _ <- result.try(ducky.exec(conn, "
     CREATE TABLE ducks (name TEXT, quack_volume INT, is_rubber BOOLEAN)
-  ")
-  let assert Ok(_) = ducky.query(conn, "
+  "))
+  use _ <- result.try(ducky.exec(conn, "
     INSERT INTO ducks VALUES
       ('Sir Quacksalot', 95, false),
       ('Duck Norris', 100, false),
       ('Mallard Fillmore', 72, false),
       ('Squeaky', 0, true)
-  ")
+  "))
 
   // Find the loudest quacker
-  let assert Ok(result) = ducky.query(conn, "
+  use result <- result.map(ducky.query(conn, "
     SELECT name, quack_volume FROM ducks
     WHERE is_rubber = false
     ORDER BY quack_volume DESC LIMIT 1
-  ")
+  "))
 
   case result.rows {
     [ducky.Row([ducky.Text(name), ducky.Integer(volume)])] ->
