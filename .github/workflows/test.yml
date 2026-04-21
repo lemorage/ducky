@@ -40,8 +40,13 @@ jobs:
             priv/ducky_nif/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('priv/ducky_nif/Cargo.lock') }}
 
-      - name: Fetch or build NIF
-        run: escript priv/fetch_nif.erl
+      - name: Build NIF from source
+        run: cargo build --release --manifest-path priv/ducky_nif/Cargo.toml
+
+      - name: Install NIF
+        run: |
+          mkdir -p priv/native
+          cp priv/ducky_nif/target/release/libducky_nif.so priv/native/ducky_nif.so
 
       - name: Build
         run: gleam build
