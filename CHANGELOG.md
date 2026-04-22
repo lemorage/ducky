@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-21
+
+### Added
+- Prepared statement API: `prepare`, `execute`, `finalize`, `with_statement`
+- Bulk append via DuckDB's appender API: `append_rows`
+- `exec` function for DDL/DML statements that return no rows
+- Parameter constructor functions matching Gleam DB conventions: `int()`, `float()`, `text()`, `blob()`, `bool()`, `null()`, `nullable()`, `timestamp()`, `date()`, `time()`, `interval()`, `decimal()`
+- UNION type support with tagged value decoding
+
+### Changed
+- **BREAKING:** Removed unused `Timeout` and `TypeMismatch` error variants
+- **BREAKING:** Decode failures now return `Error` instead of silently converting to `Null`
+- `UnsupportedParameterType` error now reports the specific type name
+- Docs and examples updated to use `exec` and parameter constructors
+
+### Fixed
+- Blob encoding now returns `Blob(BitArray)` instead of `List(Integer)`
+- Blob parameter binding support added to NIF
+- NIF name mismatch for health_check function
+
 ## [0.3.0] - 2026-02-02
 
 ### Added

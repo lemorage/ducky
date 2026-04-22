@@ -4,7 +4,7 @@ defmodule Ducky.MixProject do
   def project do
     [
       app: :ducky,
-      version: "0.3.0",
+      version: "0.4.0",
       elixir: "~> 1.14",
       erlc_paths: ["src", "build/dev/erlang"],
       compilers: Mix.compilers(),
