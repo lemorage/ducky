@@ -1,4 +1,4 @@
-// Complex types: STRUCT, LIST, ARRAY, MAP, DECIMAL, temporal
+// Complex types: STRUCT, LIST, ARRAY, MAP, UNION, DECIMAL, temporal
 
 import ducky
 import gleam/io
@@ -94,8 +94,14 @@ pub fn main() {
 
     use prices <- result.try(ducky.query(conn, "SELECT * FROM prices"))
 
+    // UNION type
+    use unions <- result.try(ducky.query(
+      conn,
+      "SELECT union_value(num := 42) as u1, union_value(str := 'hello') as u2",
+    ))
+
     let _ = ducky.close(conn)
-    Ok(#(names, lists, arrays, maps, decimals, temporals, prices))
+    Ok(#(names, lists, arrays, maps, decimals, temporals, prices, unions))
   }
 
   case result {
