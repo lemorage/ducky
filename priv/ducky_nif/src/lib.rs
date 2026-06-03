@@ -434,90 +434,171 @@ fn value_to_term<'a, 'b>(env: Env<'a>, value: ValueRef<'b>) -> NifResult<Term<'a
 
 /// Converts an Arrow array element to a DuckDB ValueRef.
 fn arrow_element_to_value_ref<'b>(
-    array: &'b dyn duckdb::arrow::array::Array,
+    array: &'b duckdb::arrow::array::ArrayRef,
     elem_idx: usize,
 ) -> Result<ValueRef<'b>, String> {
     use duckdb::arrow::array::AsArray;
-    use duckdb::arrow::datatypes::DataType;
-    use duckdb::types::ListType;
+    use duckdb::arrow::datatypes::{DataType, TimeUnit as ArrowTimeUnit};
+    use duckdb::types::{EnumType, ListType};
 
-    match array.data_type() {
+    let array_ref = array.as_ref();
+    if array_ref.is_null(elem_idx) {
+        return Ok(ValueRef::Null);
+    }
+
+    match array_ref.data_type() {
         DataType::Boolean => {
-            let arr = array.as_boolean();
+            let arr = array_ref.as_boolean();
             Ok(ValueRef::Boolean(arr.value(elem_idx)))
         }
         DataType::Int8 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int8Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int8Type>();
             Ok(ValueRef::TinyInt(arr.value(elem_idx)))
         }
         DataType::Int16 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int16Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int16Type>();
             Ok(ValueRef::SmallInt(arr.value(elem_idx)))
         }
         DataType::Int32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int32Type>();
             Ok(ValueRef::Int(arr.value(elem_idx)))
         }
         DataType::Int64 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int64Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int64Type>();
             Ok(ValueRef::BigInt(arr.value(elem_idx)))
         }
         DataType::UInt8 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt8Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt8Type>();
             Ok(ValueRef::UTinyInt(arr.value(elem_idx)))
         }
         DataType::UInt16 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt16Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt16Type>();
             Ok(ValueRef::USmallInt(arr.value(elem_idx)))
         }
         DataType::UInt32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt32Type>();
             Ok(ValueRef::UInt(arr.value(elem_idx)))
         }
         DataType::UInt64 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt64Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt64Type>();
             Ok(ValueRef::UBigInt(arr.value(elem_idx)))
         }
+        DataType::Float16 => {
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
+            Ok(ValueRef::Float(arr.value(elem_idx)))
+        }
         DataType::Float32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
             Ok(ValueRef::Float(arr.value(elem_idx)))
         }
         DataType::Float64 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Float64Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float64Type>();
             Ok(ValueRef::Double(arr.value(elem_idx)))
         }
         DataType::Utf8 => {
-            let arr = array.as_string::<i32>();
+            let arr = array_ref.as_string::<i32>();
+            Ok(ValueRef::Text(arr.value(elem_idx).as_bytes()))
+        }
+        DataType::LargeUtf8 => {
+            let arr = array_ref.as_string::<i64>();
             Ok(ValueRef::Text(arr.value(elem_idx).as_bytes()))
         }
         DataType::Binary => {
-            let arr = array.as_binary::<i32>();
+            let arr = array_ref.as_binary::<i32>();
             Ok(ValueRef::Blob(arr.value(elem_idx)))
         }
+        DataType::LargeBinary => {
+            let arr = array_ref.as_binary::<i64>();
+            Ok(ValueRef::Blob(arr.value(elem_idx)))
+        }
+        DataType::Decimal128(..) => {
+            let arr = array_ref
+                .as_any()
+                .downcast_ref::<duckdb::arrow::array::Decimal128Array>()
+                .ok_or_else(|| "Failed to downcast Decimal128Array".to_string())?;
+            if arr.scale() == 0 {
+                return Ok(ValueRef::HugeInt(arr.value(elem_idx)));
+            }
+            Ok(ValueRef::Decimal(
+                rust_decimal::Decimal::from_i128_with_scale(
+                    arr.value(elem_idx),
+                    arr.scale() as u32,
+                ),
+            ))
+        }
         DataType::Struct(_) => {
-            let child_struct = array.as_struct();
+            let child_struct = array_ref.as_struct();
             Ok(ValueRef::Struct(child_struct, elem_idx))
         }
+        DataType::LargeList(_) => {
+            let child_list = array_ref.as_list::<i64>();
+            Ok(ValueRef::List(ListType::Large(child_list), elem_idx))
+        }
         DataType::List(_) => {
-            let child_list = array.as_list();
+            let child_list = array_ref.as_list::<i32>();
             Ok(ValueRef::List(ListType::Regular(child_list), elem_idx))
         }
-        DataType::Timestamp(time_unit, _) => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::TimestampMicrosecondType>();
+        DataType::Dictionary(key_type, _) => {
+            let arr = array_ref.as_any();
+            Ok(ValueRef::Enum(
+                match key_type.as_ref() {
+                    DataType::UInt8 => EnumType::UInt8(
+                        arr.downcast_ref::<duckdb::arrow::array::DictionaryArray<
+                            duckdb::arrow::datatypes::UInt8Type,
+                        >>()
+                        .ok_or_else(|| "Failed to downcast UInt8 dictionary".to_string())?,
+                    ),
+                    DataType::UInt16 => EnumType::UInt16(
+                        arr.downcast_ref::<duckdb::arrow::array::DictionaryArray<
+                            duckdb::arrow::datatypes::UInt16Type,
+                        >>()
+                        .ok_or_else(|| "Failed to downcast UInt16 dictionary".to_string())?,
+                    ),
+                    DataType::UInt32 => EnumType::UInt32(
+                        arr.downcast_ref::<duckdb::arrow::array::DictionaryArray<
+                            duckdb::arrow::datatypes::UInt32Type,
+                        >>()
+                        .ok_or_else(|| "Failed to downcast UInt32 dictionary".to_string())?,
+                    ),
+                    typ => return Err(format!("Unsupported enum key type: {:?}", typ)),
+                },
+                elem_idx,
+            ))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Second => {
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampSecondType>();
+            let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
+            Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Millisecond => {
+            let arr =
+                array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampMillisecondType>();
+            let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
+            Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Microsecond => {
+            let arr =
+                array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampMicrosecondType>();
+            let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
+            Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Nanosecond => {
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampNanosecondType>();
             let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
             Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
         }
         DataType::Date32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Date32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Date32Type>();
             Ok(ValueRef::Date32(arr.value(elem_idx)))
         }
         DataType::Time64(time_unit) => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Time64MicrosecondType>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Time64MicrosecondType>();
             let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
             Ok(ValueRef::Time64(duckdb_unit, arr.value(elem_idx)))
         }
         DataType::Interval(_) => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::IntervalMonthDayNanoType>();
+            let arr =
+                array_ref.as_primitive::<duckdb::arrow::datatypes::IntervalMonthDayNanoType>();
             let interval = arr.value(elem_idx);
             Ok(ValueRef::Interval {
                 months: interval.months,
@@ -525,8 +606,23 @@ fn arrow_element_to_value_ref<'b>(
                 nanos: interval.nanoseconds,
             })
         }
+        DataType::Map(..) => {
+            let arr = array_ref
+                .as_any()
+                .downcast_ref::<duckdb::arrow::array::MapArray>()
+                .ok_or_else(|| "Failed to downcast MapArray".to_string())?;
+            Ok(ValueRef::Map(arr, elem_idx))
+        }
+        DataType::FixedSizeList(..) => {
+            let arr = array_ref
+                .as_any()
+                .downcast_ref::<duckdb::arrow::array::FixedSizeListArray>()
+                .ok_or_else(|| "Failed to downcast FixedSizeListArray".to_string())?;
+            Ok(ValueRef::Array(arr, elem_idx))
+        }
+        DataType::Union(..) => Ok(ValueRef::Union(array, elem_idx)),
         unsupported_type => Err(format!(
-            "Unsupported list element type: {:?}",
+            "Unsupported arrow element type: {:?}",
             unsupported_type
         )),
     }
@@ -570,7 +666,7 @@ fn encode_list<'a, 'b>(
         if values_array.is_null(elem_idx) {
             elements.push(atoms::null().encode(env));
         } else {
-            let value_ref = arrow_element_to_value_ref(values_array.as_ref(), elem_idx)
+            let value_ref = arrow_element_to_value_ref(values_array, elem_idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             let term = value_to_term(env, value_ref)?;
             elements.push(term);
@@ -604,7 +700,7 @@ fn encode_struct<'a>(
             continue;
         }
 
-        match arrow_element_to_value_ref(field.as_ref(), row_idx) {
+        match arrow_element_to_value_ref(field, row_idx) {
             Ok(value_ref) => {
                 let term_value = value_to_term(env, value_ref)?;
                 map = map.map_put(field_name.encode(env), term_value)?;
@@ -656,7 +752,7 @@ fn encode_array<'a>(
         if values.is_null(elem_idx) {
             elements.push(atoms::null().encode(env));
         } else {
-            let value_ref = arrow_element_to_value_ref(values.as_ref(), elem_idx)
+            let value_ref = arrow_element_to_value_ref(&values, elem_idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             let term = value_to_term(env, value_ref)?;
             elements.push(term);
@@ -692,7 +788,7 @@ fn encode_map<'a>(
         let key_str = if keys.is_null(idx) {
             "null".to_string()
         } else {
-            let key_ref = arrow_element_to_value_ref(keys.as_ref(), idx)
+            let key_ref = arrow_element_to_value_ref(keys, idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             value_to_string(key_ref)
         };
@@ -701,7 +797,7 @@ fn encode_map<'a>(
         let value_term = if values.is_null(idx) {
             atoms::null().encode(env)
         } else {
-            let value_ref = arrow_element_to_value_ref(values.as_ref(), idx)
+            let value_ref = arrow_element_to_value_ref(values, idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             value_to_term(env, value_ref)?
         };
@@ -754,7 +850,7 @@ fn encode_union<'a>(
     let value_term = if child_array.is_null(child_idx) {
         atoms::null().encode(env)
     } else {
-        match arrow_element_to_value_ref(child_array.as_ref(), child_idx) {
+        match arrow_element_to_value_ref(child_array, child_idx) {
             Ok(value_ref) => value_to_term(env, value_ref)?,
             Err(e) => return Err(rustler::Error::Term(Box::new(e))),
         }
