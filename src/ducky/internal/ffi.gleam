@@ -34,6 +34,16 @@ pub fn execute_query(
   params: List(Dynamic),
 ) -> Result(#(List(String), List(List(Dynamic))), Dynamic)
 
+/// Executes a SQL query and returns column-oriented results.
+///
+/// Returns a list of {column_name, values} pairs.
+@external(erlang, "ducky_nif", "execute_query_columns")
+pub fn execute_query_columns(
+  conn: NativeConnection,
+  sql: String,
+  params: List(Dynamic),
+) -> Result(List(#(String, List(Dynamic))), Dynamic)
+
 /// Prepares a SQL statement for repeated execution.
 ///
 /// Validates the SQL and returns a statement handle that can be
@@ -52,6 +62,13 @@ pub fn execute_prepared(
   stmt: NativeStatement,
   params: List(Dynamic),
 ) -> Result(#(List(String), List(List(Dynamic))), Dynamic)
+
+/// Executes a prepared statement and returns column-oriented results.
+@external(erlang, "ducky_nif", "execute_prepared_columns")
+pub fn execute_prepared_columns(
+  stmt: NativeStatement,
+  params: List(Dynamic),
+) -> Result(List(#(String, List(Dynamic))), Dynamic)
 
 /// Finalizes a prepared statement, releasing resources.
 @external(erlang, "ducky_nif", "finalize")

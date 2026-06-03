@@ -219,6 +219,119 @@ pub fn query_insert_and_select_test() {
   |> should.equal(2)
 }
 
+pub fn query_columns_select_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query_columns(
+      conn,
+      "SELECT * FROM (VALUES (1, 'Alice'), (2, 'Bob')) AS users(id, name)",
+    )
+
+  let ducky.ColumnDataFrame(columns) = result
+  let assert [
+    ducky.Column("id", [ducky.Integer(1), ducky.Integer(2)]),
+    ducky.Column("name", [ducky.Text("Alice"), ducky.Text("Bob")]),
+  ] = columns
+}
+
+pub fn query_and_query_columns_return_different_shapes_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let sql = "SELECT * FROM (VALUES (1, 'Alice'), (2, 'Bob')) AS users(id, name)"
+
+  let assert Ok(row_result) = ducky.query(conn, sql)
+  let assert Ok(column_result) = ducky.query_columns(conn, sql)
+
+  row_result.columns |> should.equal(["id", "name"])
+  let assert [
+    ducky.Row([ducky.Integer(1), ducky.Text("Alice")]),
+    ducky.Row([ducky.Integer(2), ducky.Text("Bob")]),
+  ] = row_result.rows
+
+  let ducky.ColumnDataFrame(columns) = column_result
+  let assert [
+    ducky.Column("id", [ducky.Integer(1), ducky.Integer(2)]),
+    ducky.Column("name", [ducky.Text("Alice"), ducky.Text("Bob")]),
+  ] = columns
+}
+
+pub fn query_columns_exposes_whole_column_values_directly_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let sql =
+    "SELECT * FROM (VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Eve')) AS users(id, name)"
+
+  let assert Ok(row_result) = ducky.query(conn, sql)
+  let row_ids =
+    row_result.rows
+    |> list.map(fn(row) {
+      case ducky.get(row, 0) {
+        option.Some(ducky.Integer(id)) -> id
+        _ -> -1
+      }
+    })
+
+  let assert Ok(column_result) = ducky.query_columns(conn, sql)
+  let ducky.ColumnDataFrame(columns) = column_result
+  let assert [ducky.Column("id", column_ids), ducky.Column("name", _)] = columns
+
+  row_ids |> should.equal([1, 2, 3])
+  column_ids
+  |> should.equal([ducky.Integer(1), ducky.Integer(2), ducky.Integer(3)])
+}
+
+pub fn query_columns_empty_select_keeps_columns_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+
+  let assert Ok(result) = ducky.query_columns(conn, "SELECT * FROM users")
+
+  let ducky.ColumnDataFrame(columns) = result
+  let assert [ducky.Column("id", []), ducky.Column("name", [])] = columns
+}
+
+pub fn query_columns_empty_count_select_keeps_column_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query_columns(conn, "SELECT 1 AS Count WHERE false")
+
+  let ducky.ColumnDataFrame(columns) = result
+  let assert [ducky.Column("Count", [])] = columns
+}
+
+pub fn query_columns_non_result_statement_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) = ducky.query_columns(conn, "CREATE TABLE t (id INT)")
+
+  let ducky.ColumnDataFrame(columns) = result
+  columns |> should.equal([])
+}
+
+pub fn query_columns_insert_statement_returns_empty_columns_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE t (id INT)")
+
+  let assert Ok(result) =
+    ducky.query_columns(conn, "INSERT INTO t VALUES (1), (2)")
+
+  let ducky.ColumnDataFrame(columns) = result
+  columns |> should.equal([])
+}
+
+pub fn query_columns_insert_returning_keeps_columns_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) = ducky.query(conn, "CREATE TABLE t (id INT)")
+
+  let assert Ok(result) =
+    ducky.query_columns(conn, "INSERT INTO t VALUES (1), (2) RETURNING id")
+
+  let ducky.ColumnDataFrame(columns) = result
+  let assert [ducky.Column("id", [ducky.Integer(1), ducky.Integer(2)])] =
+    columns
+}
+
 pub fn query_params_select_test() {
   let assert Ok(conn) = ducky.connect(":memory:")
   let assert Ok(_) =
@@ -242,6 +355,26 @@ pub fn query_params_select_test() {
   result.rows
   |> list.length
   |> should.equal(2)
+}
+
+pub fn query_params_columns_select_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.query_params_columns(
+      conn,
+      "SELECT ?::INTEGER AS id, ?::VARCHAR AS name",
+      [
+        ducky.Integer(42),
+        ducky.Text("Eve"),
+      ],
+    )
+
+  let ducky.ColumnDataFrame(columns) = result
+  let assert [
+    ducky.Column("id", [ducky.Integer(42)]),
+    ducky.Column("name", [ducky.Text("Eve")]),
+  ] = columns
 }
 
 pub fn query_params_insert_test() {
@@ -1269,6 +1402,34 @@ pub fn execute_prepared_select_test() {
   result.columns |> should.equal(["name"])
   let assert [ducky.Row([ducky.Text(name)])] = result.rows
   name |> should.equal("Alice")
+}
+
+pub fn execute_prepared_columns_select_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+  let assert Ok(_) = ducky.query(conn, "INSERT INTO users VALUES (1, 'Alice')")
+  let assert Ok(stmt) =
+    ducky.prepare(conn, "SELECT name FROM users WHERE id = ?")
+
+  let assert Ok(result) = ducky.execute_columns(stmt, [ducky.Integer(1)])
+
+  let ducky.ColumnDataFrame(columns) = result
+  let assert [ducky.Column("name", [ducky.Text(name)])] = columns
+  name |> should.equal("Alice")
+}
+
+pub fn execute_prepared_columns_insert_statement_returns_empty_columns_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.query(conn, "CREATE TABLE users (id INT, name VARCHAR)")
+  let assert Ok(stmt) = ducky.prepare(conn, "INSERT INTO users VALUES (?, ?)")
+
+  let assert Ok(result) =
+    ducky.execute_columns(stmt, [ducky.Integer(1), ducky.Text("Alice")])
+
+  let ducky.ColumnDataFrame(columns) = result
+  columns |> should.equal([])
 }
 
 pub fn execute_prepared_insert_test() {

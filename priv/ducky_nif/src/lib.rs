@@ -229,6 +229,39 @@ fn execute_prepared<'a>(
     execute_statement(env, &connection, sql, param_refs.as_slice())
 }
 
+/// Executes a prepared statement and returns column-oriented results.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn execute_prepared_columns<'a>(
+    env: Env<'a>,
+    stmt: ResourceArc<StatementResource>,
+    params_list: Vec<Term<'a>>,
+) -> Result<Vec<(String, Vec<Term<'a>>)>, DuckyError> {
+    use duckdb::types::ToSql;
+
+    let sql_guard = stmt
+        .sql
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock statement: {}", e)))?;
+
+    let sql = sql_guard.as_ref().ok_or(DuckyError::StatementFinalized)?;
+
+    let connection = stmt
+        .connection
+        .connection
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock connection: {}", e)))?;
+
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+    for term in params_list {
+        let param = term_to_duckdb_param(term)?;
+        params.push(param);
+    }
+
+    let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    execute_statement_columns(env, &connection, sql, param_refs.as_slice())
+}
+
 /// Finalizes a prepared statement, invalidating it for further use.
 ///
 /// Clears the stored SQL so any subsequent execute_prepared calls will
@@ -345,6 +378,32 @@ fn execute_query<'a>(
     let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     execute_statement(env, &connection, &sql, param_refs.as_slice())
+}
+
+/// Executes a SQL query with optional parameter binding and returns columns.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn execute_query_columns<'a>(
+    env: Env<'a>,
+    conn: ResourceArc<ConnectionResource>,
+    sql: String,
+    params_list: Vec<Term<'a>>,
+) -> Result<Vec<(String, Vec<Term<'a>>)>, DuckyError> {
+    use duckdb::types::ToSql;
+
+    let connection = conn
+        .connection
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock connection: {}", e)))?;
+
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+    for term in params_list {
+        let param = term_to_duckdb_param(term)?;
+        params.push(param);
+    }
+
+    let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    execute_statement_columns(env, &connection, &sql, param_refs.as_slice())
 }
 
 /// Converts Arrow TimeUnit to DuckDB TimeUnit.
@@ -881,6 +940,103 @@ fn value_to_string(value: ValueRef<'_>) -> String {
     }
 }
 
+/// Extracts bare SQL keywords for statement classification.
+///
+/// This intentionally skips comments, string literals, and quoted identifiers
+/// so words like `RETURNING` only affect control flow when they are actual SQL
+/// keywords. It is a focused lexer, not a full SQL parser.
+fn sql_keywords(sql: &str) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut keywords = Vec::new();
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b if b.is_ascii_whitespace() => idx += 1,
+            b'-' if bytes.get(idx + 1) == Some(&b'-') => {
+                idx += 2;
+                while idx < bytes.len() && bytes[idx] != b'\n' {
+                    idx += 1;
+                }
+            }
+            b'/' if bytes.get(idx + 1) == Some(&b'*') => {
+                idx += 2;
+                while idx + 1 < bytes.len() && !(bytes[idx] == b'*' && bytes[idx + 1] == b'/') {
+                    idx += 1;
+                }
+                idx = (idx + 2).min(bytes.len());
+            }
+            b'\'' => {
+                idx += 1;
+                while idx < bytes.len() {
+                    if bytes[idx] == b'\'' {
+                        idx += 1;
+                        if bytes.get(idx) == Some(&b'\'') {
+                            idx += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        idx += 1;
+                    }
+                }
+            }
+            b'"' | b'`' => {
+                let quote = bytes[idx];
+                idx += 1;
+                while idx < bytes.len() {
+                    if bytes[idx] == quote {
+                        idx += 1;
+                        if bytes.get(idx) == Some(&quote) {
+                            idx += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        idx += 1;
+                    }
+                }
+            }
+            b if b.is_ascii_alphabetic() || b == b'_' => {
+                let start = idx;
+                idx += 1;
+                while idx < bytes.len()
+                    && (bytes[idx].is_ascii_alphanumeric() || bytes[idx] == b'_')
+                {
+                    idx += 1;
+                }
+                keywords.push(sql[start..idx].to_ascii_uppercase());
+            }
+            _ => idx += 1,
+        }
+    }
+
+    keywords
+}
+
+/// Classifies whether the column-oriented API should read an Arrow result.
+///
+/// DuckDB's Arrow path returns a synthetic `Count` column for plain DML, while
+/// the row API treats DDL/DML as empty results. Classifying first lets the two
+/// APIs keep the same non-result behavior without dropping legitimate result
+/// columns named `Count`.
+fn is_result_returning_statement(sql: &str) -> bool {
+    let keywords = sql_keywords(sql);
+    let Some(first_keyword) = keywords.first().map(String::as_str) else {
+        return true;
+    };
+
+    match first_keyword {
+        "SELECT" | "WITH" | "VALUES" | "SHOW" | "DESCRIBE" | "EXPLAIN" | "SUMMARIZE" | "PRAGMA"
+        | "CALL" | "FROM" => true,
+        "INSERT" | "UPDATE" | "DELETE" | "MERGE" => keywords.iter().any(|k| k == "RETURNING"),
+        "CREATE" | "DROP" | "ALTER" | "COPY" | "ANALYZE" | "SET" | "RESET" | "LOAD" | "INSTALL"
+        | "ATTACH" | "DETACH" | "VACUUM" | "BEGIN" | "COMMIT" | "ROLLBACK" | "TRUNCATE" | "USE"
+        | "EXPORT" | "IMPORT" => false,
+        _ => true,
+    }
+}
+
 /// Core statement execution logic for all queries.
 fn execute_statement<'a>(
     env: Env<'a>,
@@ -926,6 +1082,66 @@ fn execute_statement<'a>(
             // Not a query, try executing as DDL/DML statement
             stmt.execute(params)?;
             Ok((Vec::new(), Vec::new()))
+        }
+    }
+}
+
+/// Core statement execution logic for column-oriented queries.
+fn execute_statement_columns<'a>(
+    env: Env<'a>,
+    connection: &DuckDBConnection,
+    sql: &str,
+    params: &[&dyn duckdb::types::ToSql],
+) -> Result<Vec<(String, Vec<Term<'a>>)>, DuckyError> {
+    let mut stmt = connection.prepare(sql)?;
+
+    // Avoid DuckDB's synthetic Arrow `Count` result for non-result statements.
+    if !is_result_returning_statement(sql) {
+        stmt.execute(params)?;
+        return Ok(Vec::new());
+    }
+
+    match stmt.query_arrow(params) {
+        Ok(mut batches) => {
+            let schema = batches.get_schema();
+            let mut columns: Vec<(String, Vec<Term<'a>>)> = schema
+                .fields()
+                .iter()
+                .map(|field| (field.name().to_string(), Vec::new()))
+                .collect();
+
+            for batch in batches.by_ref() {
+                for column_idx in 0..batch.num_columns() {
+                    let array = batch.column(column_idx);
+                    for row_idx in 0..batch.num_rows() {
+                        let term = if array.is_null(row_idx) {
+                            atoms::null().encode(env)
+                        } else {
+                            let value =
+                                arrow_element_to_value_ref(array, row_idx).map_err(|e| {
+                                    DuckyError::DatabaseError(format!(
+                                        "Failed to convert column value: {}",
+                                        e
+                                    ))
+                                })?;
+                            value_to_term(env, value).map_err(|_| {
+                                DuckyError::DatabaseError(
+                                    "Failed to convert column value".to_string(),
+                                )
+                            })?
+                        };
+                        if let Some((_, values)) = columns.get_mut(column_idx) {
+                            values.push(term);
+                        }
+                    }
+                }
+            }
+
+            Ok(columns)
+        }
+        Err(_) => {
+            stmt.execute(params)?;
+            Ok(Vec::new())
         }
     }
 }
