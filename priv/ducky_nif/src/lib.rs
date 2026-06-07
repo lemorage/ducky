@@ -543,8 +543,8 @@ fn arrow_element_to_value_ref<'b>(
             Ok(ValueRef::UBigInt(arr.value(elem_idx)))
         }
         DataType::Float16 => {
-            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
-            Ok(ValueRef::Float(arr.value(elem_idx)))
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float16Type>();
+            Ok(ValueRef::Float(f32::from(arr.value(elem_idx))))
         }
         DataType::Float32 => {
             let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
@@ -1101,49 +1101,34 @@ fn execute_statement_columns<'a>(
         return Ok(Vec::new());
     }
 
-    match stmt.query_arrow(params) {
-        Ok(mut batches) => {
-            let schema = batches.get_schema();
-            let mut columns: Vec<(String, Vec<Term<'a>>)> = schema
-                .fields()
-                .iter()
-                .map(|field| (field.name().to_string(), Vec::new()))
-                .collect();
+    let mut batches = stmt.query_arrow(params)?;
+    let schema = batches.get_schema();
+    let mut columns: Vec<(String, Vec<Term<'a>>)> = schema
+        .fields()
+        .iter()
+        .map(|field| (field.name().to_string(), Vec::new()))
+        .collect();
 
-            for batch in batches.by_ref() {
-                for column_idx in 0..batch.num_columns() {
-                    let array = batch.column(column_idx);
-                    for row_idx in 0..batch.num_rows() {
-                        let term = if array.is_null(row_idx) {
-                            atoms::null().encode(env)
-                        } else {
-                            let value =
-                                arrow_element_to_value_ref(array, row_idx).map_err(|e| {
-                                    DuckyError::DatabaseError(format!(
-                                        "Failed to convert column value: {}",
-                                        e
-                                    ))
-                                })?;
-                            value_to_term(env, value).map_err(|_| {
-                                DuckyError::DatabaseError(
-                                    "Failed to convert column value".to_string(),
-                                )
-                            })?
-                        };
-                        if let Some((_, values)) = columns.get_mut(column_idx) {
-                            values.push(term);
-                        }
-                    }
-                }
+    for batch in batches.by_ref() {
+        for column_idx in 0..batch.num_columns() {
+            let array = batch.column(column_idx);
+            for row_idx in 0..batch.num_rows() {
+                let term = if array.is_null(row_idx) {
+                    atoms::null().encode(env)
+                } else {
+                    let value = arrow_element_to_value_ref(array, row_idx).map_err(|e| {
+                        DuckyError::DatabaseError(format!("Failed to convert column value: {}", e))
+                    })?;
+                    value_to_term(env, value).map_err(|_| {
+                        DuckyError::DatabaseError("Failed to convert column value".to_string())
+                    })?
+                };
+                columns[column_idx].1.push(term);
             }
-
-            Ok(columns)
-        }
-        Err(_) => {
-            stmt.execute(params)?;
-            Ok(Vec::new())
         }
     }
+
+    Ok(columns)
 }
 
 /// Converts days since Unix epoch to ISO date string (YYYY-MM-DD).
