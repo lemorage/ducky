@@ -229,6 +229,39 @@ fn execute_prepared<'a>(
     execute_statement(env, &connection, sql, param_refs.as_slice())
 }
 
+/// Executes a prepared statement and returns column-oriented results.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn execute_prepared_columns<'a>(
+    env: Env<'a>,
+    stmt: ResourceArc<StatementResource>,
+    params_list: Vec<Term<'a>>,
+) -> Result<Vec<(String, Vec<Term<'a>>)>, DuckyError> {
+    use duckdb::types::ToSql;
+
+    let sql_guard = stmt
+        .sql
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock statement: {}", e)))?;
+
+    let sql = sql_guard.as_ref().ok_or(DuckyError::StatementFinalized)?;
+
+    let connection = stmt
+        .connection
+        .connection
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock connection: {}", e)))?;
+
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+    for term in params_list {
+        let param = term_to_duckdb_param(term)?;
+        params.push(param);
+    }
+
+    let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    execute_statement_columns(env, &connection, sql, param_refs.as_slice())
+}
+
 /// Finalizes a prepared statement, invalidating it for further use.
 ///
 /// Clears the stored SQL so any subsequent execute_prepared calls will
@@ -347,6 +380,32 @@ fn execute_query<'a>(
     execute_statement(env, &connection, &sql, param_refs.as_slice())
 }
 
+/// Executes a SQL query with optional parameter binding and returns columns.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn execute_query_columns<'a>(
+    env: Env<'a>,
+    conn: ResourceArc<ConnectionResource>,
+    sql: String,
+    params_list: Vec<Term<'a>>,
+) -> Result<Vec<(String, Vec<Term<'a>>)>, DuckyError> {
+    use duckdb::types::ToSql;
+
+    let connection = conn
+        .connection
+        .lock()
+        .map_err(|e| DuckyError::DatabaseError(format!("Failed to lock connection: {}", e)))?;
+
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+    for term in params_list {
+        let param = term_to_duckdb_param(term)?;
+        params.push(param);
+    }
+
+    let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    execute_statement_columns(env, &connection, &sql, param_refs.as_slice())
+}
+
 /// Converts Arrow TimeUnit to DuckDB TimeUnit.
 fn arrow_to_duckdb_time_unit(
     arrow_unit: duckdb::arrow::datatypes::TimeUnit,
@@ -434,90 +493,171 @@ fn value_to_term<'a, 'b>(env: Env<'a>, value: ValueRef<'b>) -> NifResult<Term<'a
 
 /// Converts an Arrow array element to a DuckDB ValueRef.
 fn arrow_element_to_value_ref<'b>(
-    array: &'b dyn duckdb::arrow::array::Array,
+    array: &'b duckdb::arrow::array::ArrayRef,
     elem_idx: usize,
 ) -> Result<ValueRef<'b>, String> {
     use duckdb::arrow::array::AsArray;
-    use duckdb::arrow::datatypes::DataType;
-    use duckdb::types::ListType;
+    use duckdb::arrow::datatypes::{DataType, TimeUnit as ArrowTimeUnit};
+    use duckdb::types::{EnumType, ListType};
 
-    match array.data_type() {
+    let array_ref = array.as_ref();
+    if array_ref.is_null(elem_idx) {
+        return Ok(ValueRef::Null);
+    }
+
+    match array_ref.data_type() {
         DataType::Boolean => {
-            let arr = array.as_boolean();
+            let arr = array_ref.as_boolean();
             Ok(ValueRef::Boolean(arr.value(elem_idx)))
         }
         DataType::Int8 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int8Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int8Type>();
             Ok(ValueRef::TinyInt(arr.value(elem_idx)))
         }
         DataType::Int16 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int16Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int16Type>();
             Ok(ValueRef::SmallInt(arr.value(elem_idx)))
         }
         DataType::Int32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int32Type>();
             Ok(ValueRef::Int(arr.value(elem_idx)))
         }
         DataType::Int64 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Int64Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Int64Type>();
             Ok(ValueRef::BigInt(arr.value(elem_idx)))
         }
         DataType::UInt8 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt8Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt8Type>();
             Ok(ValueRef::UTinyInt(arr.value(elem_idx)))
         }
         DataType::UInt16 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt16Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt16Type>();
             Ok(ValueRef::USmallInt(arr.value(elem_idx)))
         }
         DataType::UInt32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt32Type>();
             Ok(ValueRef::UInt(arr.value(elem_idx)))
         }
         DataType::UInt64 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::UInt64Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::UInt64Type>();
             Ok(ValueRef::UBigInt(arr.value(elem_idx)))
         }
+        DataType::Float16 => {
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float16Type>();
+            Ok(ValueRef::Float(f32::from(arr.value(elem_idx))))
+        }
         DataType::Float32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float32Type>();
             Ok(ValueRef::Float(arr.value(elem_idx)))
         }
         DataType::Float64 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Float64Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Float64Type>();
             Ok(ValueRef::Double(arr.value(elem_idx)))
         }
         DataType::Utf8 => {
-            let arr = array.as_string::<i32>();
+            let arr = array_ref.as_string::<i32>();
+            Ok(ValueRef::Text(arr.value(elem_idx).as_bytes()))
+        }
+        DataType::LargeUtf8 => {
+            let arr = array_ref.as_string::<i64>();
             Ok(ValueRef::Text(arr.value(elem_idx).as_bytes()))
         }
         DataType::Binary => {
-            let arr = array.as_binary::<i32>();
+            let arr = array_ref.as_binary::<i32>();
             Ok(ValueRef::Blob(arr.value(elem_idx)))
         }
+        DataType::LargeBinary => {
+            let arr = array_ref.as_binary::<i64>();
+            Ok(ValueRef::Blob(arr.value(elem_idx)))
+        }
+        DataType::Decimal128(..) => {
+            let arr = array_ref
+                .as_any()
+                .downcast_ref::<duckdb::arrow::array::Decimal128Array>()
+                .ok_or_else(|| "Failed to downcast Decimal128Array".to_string())?;
+            if arr.scale() == 0 {
+                return Ok(ValueRef::HugeInt(arr.value(elem_idx)));
+            }
+            Ok(ValueRef::Decimal(
+                rust_decimal::Decimal::from_i128_with_scale(
+                    arr.value(elem_idx),
+                    arr.scale() as u32,
+                ),
+            ))
+        }
         DataType::Struct(_) => {
-            let child_struct = array.as_struct();
+            let child_struct = array_ref.as_struct();
             Ok(ValueRef::Struct(child_struct, elem_idx))
         }
+        DataType::LargeList(_) => {
+            let child_list = array_ref.as_list::<i64>();
+            Ok(ValueRef::List(ListType::Large(child_list), elem_idx))
+        }
         DataType::List(_) => {
-            let child_list = array.as_list();
+            let child_list = array_ref.as_list::<i32>();
             Ok(ValueRef::List(ListType::Regular(child_list), elem_idx))
         }
-        DataType::Timestamp(time_unit, _) => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::TimestampMicrosecondType>();
+        DataType::Dictionary(key_type, _) => {
+            let arr = array_ref.as_any();
+            Ok(ValueRef::Enum(
+                match key_type.as_ref() {
+                    DataType::UInt8 => EnumType::UInt8(
+                        arr.downcast_ref::<duckdb::arrow::array::DictionaryArray<
+                            duckdb::arrow::datatypes::UInt8Type,
+                        >>()
+                        .ok_or_else(|| "Failed to downcast UInt8 dictionary".to_string())?,
+                    ),
+                    DataType::UInt16 => EnumType::UInt16(
+                        arr.downcast_ref::<duckdb::arrow::array::DictionaryArray<
+                            duckdb::arrow::datatypes::UInt16Type,
+                        >>()
+                        .ok_or_else(|| "Failed to downcast UInt16 dictionary".to_string())?,
+                    ),
+                    DataType::UInt32 => EnumType::UInt32(
+                        arr.downcast_ref::<duckdb::arrow::array::DictionaryArray<
+                            duckdb::arrow::datatypes::UInt32Type,
+                        >>()
+                        .ok_or_else(|| "Failed to downcast UInt32 dictionary".to_string())?,
+                    ),
+                    typ => return Err(format!("Unsupported enum key type: {:?}", typ)),
+                },
+                elem_idx,
+            ))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Second => {
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampSecondType>();
+            let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
+            Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Millisecond => {
+            let arr =
+                array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampMillisecondType>();
+            let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
+            Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Microsecond => {
+            let arr =
+                array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampMicrosecondType>();
+            let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
+            Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
+        }
+        DataType::Timestamp(time_unit, _) if *time_unit == ArrowTimeUnit::Nanosecond => {
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::TimestampNanosecondType>();
             let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
             Ok(ValueRef::Timestamp(duckdb_unit, arr.value(elem_idx)))
         }
         DataType::Date32 => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Date32Type>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Date32Type>();
             Ok(ValueRef::Date32(arr.value(elem_idx)))
         }
         DataType::Time64(time_unit) => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::Time64MicrosecondType>();
+            let arr = array_ref.as_primitive::<duckdb::arrow::datatypes::Time64MicrosecondType>();
             let duckdb_unit = arrow_to_duckdb_time_unit(*time_unit);
             Ok(ValueRef::Time64(duckdb_unit, arr.value(elem_idx)))
         }
         DataType::Interval(_) => {
-            let arr = array.as_primitive::<duckdb::arrow::datatypes::IntervalMonthDayNanoType>();
+            let arr =
+                array_ref.as_primitive::<duckdb::arrow::datatypes::IntervalMonthDayNanoType>();
             let interval = arr.value(elem_idx);
             Ok(ValueRef::Interval {
                 months: interval.months,
@@ -525,8 +665,23 @@ fn arrow_element_to_value_ref<'b>(
                 nanos: interval.nanoseconds,
             })
         }
+        DataType::Map(..) => {
+            let arr = array_ref
+                .as_any()
+                .downcast_ref::<duckdb::arrow::array::MapArray>()
+                .ok_or_else(|| "Failed to downcast MapArray".to_string())?;
+            Ok(ValueRef::Map(arr, elem_idx))
+        }
+        DataType::FixedSizeList(..) => {
+            let arr = array_ref
+                .as_any()
+                .downcast_ref::<duckdb::arrow::array::FixedSizeListArray>()
+                .ok_or_else(|| "Failed to downcast FixedSizeListArray".to_string())?;
+            Ok(ValueRef::Array(arr, elem_idx))
+        }
+        DataType::Union(..) => Ok(ValueRef::Union(array, elem_idx)),
         unsupported_type => Err(format!(
-            "Unsupported list element type: {:?}",
+            "Unsupported arrow element type: {:?}",
             unsupported_type
         )),
     }
@@ -570,7 +725,7 @@ fn encode_list<'a, 'b>(
         if values_array.is_null(elem_idx) {
             elements.push(atoms::null().encode(env));
         } else {
-            let value_ref = arrow_element_to_value_ref(values_array.as_ref(), elem_idx)
+            let value_ref = arrow_element_to_value_ref(values_array, elem_idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             let term = value_to_term(env, value_ref)?;
             elements.push(term);
@@ -604,7 +759,7 @@ fn encode_struct<'a>(
             continue;
         }
 
-        match arrow_element_to_value_ref(field.as_ref(), row_idx) {
+        match arrow_element_to_value_ref(field, row_idx) {
             Ok(value_ref) => {
                 let term_value = value_to_term(env, value_ref)?;
                 map = map.map_put(field_name.encode(env), term_value)?;
@@ -656,7 +811,7 @@ fn encode_array<'a>(
         if values.is_null(elem_idx) {
             elements.push(atoms::null().encode(env));
         } else {
-            let value_ref = arrow_element_to_value_ref(values.as_ref(), elem_idx)
+            let value_ref = arrow_element_to_value_ref(&values, elem_idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             let term = value_to_term(env, value_ref)?;
             elements.push(term);
@@ -692,7 +847,7 @@ fn encode_map<'a>(
         let key_str = if keys.is_null(idx) {
             "null".to_string()
         } else {
-            let key_ref = arrow_element_to_value_ref(keys.as_ref(), idx)
+            let key_ref = arrow_element_to_value_ref(keys, idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             value_to_string(key_ref)
         };
@@ -701,7 +856,7 @@ fn encode_map<'a>(
         let value_term = if values.is_null(idx) {
             atoms::null().encode(env)
         } else {
-            let value_ref = arrow_element_to_value_ref(values.as_ref(), idx)
+            let value_ref = arrow_element_to_value_ref(values, idx)
                 .map_err(|e| rustler::Error::Term(Box::new(e)))?;
             value_to_term(env, value_ref)?
         };
@@ -754,7 +909,7 @@ fn encode_union<'a>(
     let value_term = if child_array.is_null(child_idx) {
         atoms::null().encode(env)
     } else {
-        match arrow_element_to_value_ref(child_array.as_ref(), child_idx) {
+        match arrow_element_to_value_ref(child_array, child_idx) {
             Ok(value_ref) => value_to_term(env, value_ref)?,
             Err(e) => return Err(rustler::Error::Term(Box::new(e))),
         }
@@ -782,6 +937,103 @@ fn value_to_string(value: ValueRef<'_>) -> String {
         ValueRef::Decimal(d) => d.to_string(),
         ValueRef::Text(s) => std::str::from_utf8(s).unwrap_or("").to_string(),
         _ => format!("{:?}", value),
+    }
+}
+
+/// Extracts bare SQL keywords for statement classification.
+///
+/// This intentionally skips comments, string literals, and quoted identifiers
+/// so words like `RETURNING` only affect control flow when they are actual SQL
+/// keywords. It is a focused lexer, not a full SQL parser.
+fn sql_keywords(sql: &str) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut keywords = Vec::new();
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b if b.is_ascii_whitespace() => idx += 1,
+            b'-' if bytes.get(idx + 1) == Some(&b'-') => {
+                idx += 2;
+                while idx < bytes.len() && bytes[idx] != b'\n' {
+                    idx += 1;
+                }
+            }
+            b'/' if bytes.get(idx + 1) == Some(&b'*') => {
+                idx += 2;
+                while idx + 1 < bytes.len() && !(bytes[idx] == b'*' && bytes[idx + 1] == b'/') {
+                    idx += 1;
+                }
+                idx = (idx + 2).min(bytes.len());
+            }
+            b'\'' => {
+                idx += 1;
+                while idx < bytes.len() {
+                    if bytes[idx] == b'\'' {
+                        idx += 1;
+                        if bytes.get(idx) == Some(&b'\'') {
+                            idx += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        idx += 1;
+                    }
+                }
+            }
+            b'"' | b'`' => {
+                let quote = bytes[idx];
+                idx += 1;
+                while idx < bytes.len() {
+                    if bytes[idx] == quote {
+                        idx += 1;
+                        if bytes.get(idx) == Some(&quote) {
+                            idx += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        idx += 1;
+                    }
+                }
+            }
+            b if b.is_ascii_alphabetic() || b == b'_' => {
+                let start = idx;
+                idx += 1;
+                while idx < bytes.len()
+                    && (bytes[idx].is_ascii_alphanumeric() || bytes[idx] == b'_')
+                {
+                    idx += 1;
+                }
+                keywords.push(sql[start..idx].to_ascii_uppercase());
+            }
+            _ => idx += 1,
+        }
+    }
+
+    keywords
+}
+
+/// Classifies whether the column-oriented API should read an Arrow result.
+///
+/// DuckDB's Arrow path returns a synthetic `Count` column for plain DML, while
+/// the row API treats DDL/DML as empty results. Classifying first lets the two
+/// APIs keep the same non-result behavior without dropping legitimate result
+/// columns named `Count`.
+fn is_result_returning_statement(sql: &str) -> bool {
+    let keywords = sql_keywords(sql);
+    let Some(first_keyword) = keywords.first().map(String::as_str) else {
+        return true;
+    };
+
+    match first_keyword {
+        "SELECT" | "WITH" | "VALUES" | "SHOW" | "DESCRIBE" | "EXPLAIN" | "SUMMARIZE" | "PRAGMA"
+        | "CALL" | "FROM" => true,
+        "INSERT" | "UPDATE" | "DELETE" | "MERGE" => keywords.iter().any(|k| k == "RETURNING"),
+        "CREATE" | "DROP" | "ALTER" | "COPY" | "ANALYZE" | "SET" | "RESET" | "LOAD" | "INSTALL"
+        | "ATTACH" | "DETACH" | "VACUUM" | "BEGIN" | "COMMIT" | "ROLLBACK" | "TRUNCATE" | "USE"
+        | "EXPORT" | "IMPORT" => false,
+        _ => true,
     }
 }
 
@@ -832,6 +1084,51 @@ fn execute_statement<'a>(
             Ok((Vec::new(), Vec::new()))
         }
     }
+}
+
+/// Core statement execution logic for column-oriented queries.
+fn execute_statement_columns<'a>(
+    env: Env<'a>,
+    connection: &DuckDBConnection,
+    sql: &str,
+    params: &[&dyn duckdb::types::ToSql],
+) -> Result<Vec<(String, Vec<Term<'a>>)>, DuckyError> {
+    let mut stmt = connection.prepare(sql)?;
+
+    // Avoid DuckDB's synthetic Arrow `Count` result for non-result statements.
+    if !is_result_returning_statement(sql) {
+        stmt.execute(params)?;
+        return Ok(Vec::new());
+    }
+
+    let mut batches = stmt.query_arrow(params)?;
+    let schema = batches.get_schema();
+    let mut columns: Vec<(String, Vec<Term<'a>>)> = schema
+        .fields()
+        .iter()
+        .map(|field| (field.name().to_string(), Vec::new()))
+        .collect();
+
+    for batch in batches.by_ref() {
+        for column_idx in 0..batch.num_columns() {
+            let array = batch.column(column_idx);
+            for row_idx in 0..batch.num_rows() {
+                let term = if array.is_null(row_idx) {
+                    atoms::null().encode(env)
+                } else {
+                    let value = arrow_element_to_value_ref(array, row_idx).map_err(|e| {
+                        DuckyError::DatabaseError(format!("Failed to convert column value: {}", e))
+                    })?;
+                    value_to_term(env, value).map_err(|_| {
+                        DuckyError::DatabaseError("Failed to convert column value".to_string())
+                    })?
+                };
+                columns[column_idx].1.push(term);
+            }
+        }
+    }
+
+    Ok(columns)
 }
 
 /// Converts days since Unix epoch to ISO date string (YYYY-MM-DD).

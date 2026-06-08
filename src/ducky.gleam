@@ -97,6 +97,16 @@ pub type DataFrame {
   DataFrame(columns: List(String), rows: List(Row))
 }
 
+/// A single column from a column-oriented query result.
+pub type Column {
+  Column(name: String, values: List(Value))
+}
+
+/// A complete column-oriented query result.
+pub type ColumnDataFrame {
+  ColumnDataFrame(columns: List(Column))
+}
+
 /// An opaque connection to a DuckDB database.
 pub opaque type Connection {
   Connection(internal: connection.Connection)
@@ -251,6 +261,20 @@ pub fn query(conn: Connection, sql: String) -> Result(DataFrame, Error) {
   |> result.try(decode_dataframe)
 }
 
+/// Executes a SQL query and returns column-oriented results.
+///
+/// This uses DuckDB's Arrow result path in the native layer and returns each
+/// result column with its values. Existing row-oriented queries should continue
+/// to use `query`.
+pub fn query_columns(
+  conn: Connection,
+  sql: String,
+) -> Result(ColumnDataFrame, Error) {
+  ffi.execute_query_columns(connection.native(conn.internal), sql, [])
+  |> result.map_error(decode_nif_error)
+  |> result.try(decode_column_dataframe)
+}
+
 /// Executes a parameterized SQL query with bound parameters to prevent SQL injection.
 ///
 /// ## Examples
@@ -283,6 +307,23 @@ pub fn query_params(
   ffi.execute_query(connection.native(conn.internal), sql, dynamic_params)
   |> result.map_error(decode_nif_error)
   |> result.try(decode_dataframe)
+}
+
+/// Executes a parameterized SQL query and returns column-oriented results.
+pub fn query_params_columns(
+  conn: Connection,
+  sql: String,
+  params: List(Value),
+) -> Result(ColumnDataFrame, Error) {
+  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
+
+  ffi.execute_query_columns(
+    connection.native(conn.internal),
+    sql,
+    dynamic_params,
+  )
+  |> result.map_error(decode_nif_error)
+  |> result.try(decode_column_dataframe)
 }
 
 /// Prepares a SQL statement for repeated execution.
@@ -322,12 +363,27 @@ pub fn prepare(conn: Connection, sql: String) -> Result(Statement, Error) {
 /// let assert Ok(result) = execute(stmt, [int(18)])
 /// // result.rows contains matching users
 /// ```
-pub fn execute(stmt: Statement, params: List(Value)) -> Result(DataFrame, Error) {
+pub fn execute(
+  stmt: Statement,
+  params: List(Value),
+) -> Result(DataFrame, Error) {
   use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
 
   ffi.execute_prepared(stmt.native, dynamic_params)
   |> result.map_error(decode_nif_error)
   |> result.try(decode_dataframe)
+}
+
+/// Executes a prepared statement and returns column-oriented results.
+pub fn execute_columns(
+  stmt: Statement,
+  params: List(Value),
+) -> Result(ColumnDataFrame, Error) {
+  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
+
+  ffi.execute_prepared_columns(stmt.native, dynamic_params)
+  |> result.map_error(decode_nif_error)
+  |> result.try(decode_column_dataframe)
 }
 
 /// Finalizes a prepared statement, releasing its resources.
@@ -583,6 +639,20 @@ fn decode_dataframe(
     }),
   )
   Ok(DataFrame(columns: columns, rows: decoded_rows))
+}
+
+/// Decodes raw NIF column result into a ColumnDataFrame.
+fn decode_column_dataframe(
+  raw: List(#(String, List(dynamic.Dynamic))),
+) -> Result(ColumnDataFrame, Error) {
+  use decoded_columns <- result.try(
+    list.try_map(raw, fn(column) {
+      let #(name, values) = column
+      use decoded_values <- result.map(list.try_map(values, decode_value))
+      Column(name: name, values: decoded_values)
+    }),
+  )
+  Ok(ColumnDataFrame(columns: decoded_columns))
 }
 
 /// Decodes a dynamic value from the NIF into a typed Value.
