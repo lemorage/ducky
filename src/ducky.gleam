@@ -107,6 +107,26 @@ pub type ColumnDataFrame {
   ColumnDataFrame(columns: List(Column))
 }
 
+pub type Returned(a) {
+  Returned(count: Int, rows: List(a))
+}
+
+pub type Columnar {
+  Columnar(names: List(String), data: List(List(Value)))
+}
+
+/// An opaque query builder. The phantom `a` tracks the decoded row type.
+///
+/// Construct with `sql`, configure with `parameter`/`returning`,
+/// terminate with `run` or `as_columns`.
+pub opaque type Query(a) {
+  Query(
+    statement: String,
+    params: List(Value),
+    decoder: fn(List(dynamic.Dynamic)) -> Result(a, Error),
+  )
+}
+
 /// An opaque connection to a DuckDB database.
 pub opaque type Connection {
   Connection(internal: connection.Connection)
@@ -363,10 +383,7 @@ pub fn prepare(conn: Connection, sql: String) -> Result(Statement, Error) {
 /// let assert Ok(result) = execute(stmt, [int(18)])
 /// // result.rows contains matching users
 /// ```
-pub fn execute(
-  stmt: Statement,
-  params: List(Value),
-) -> Result(DataFrame, Error) {
+pub fn execute(stmt: Statement, params: List(Value)) -> Result(DataFrame, Error) {
   use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
 
   ffi.execute_prepared(stmt.native, dynamic_params)
@@ -462,6 +479,161 @@ pub fn append_rows(
       |> result.map_error(decode_nif_error)
     }
   }
+}
+
+/// No I/O happens here; the query executes only at `run` or `as_columns`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ducky.sql("SELECT * FROM users")
+/// |> ducky.run(conn)
+/// ```
+pub fn sql(statement: String) -> Query(Row) {
+  Query(statement: statement, params: [], decoder: decode_raw_row)
+}
+
+/// ## Examples
+///
+/// ```gleam
+/// ducky.sql("SELECT * FROM users WHERE id = ?")
+/// |> ducky.parameter(ducky.int(42))
+/// |> ducky.run(conn)
+/// ```
+pub fn parameter(query: Query(a), value: Value) -> Query(a) {
+  // Prepend for O(1); reversed before execution to preserve ? binding order.
+  Query(..query, params: [value, ..query.params])
+}
+
+/// ## Examples
+///
+/// ```gleam
+/// ducky.sql("SELECT * FROM users WHERE id = ? AND age > ?")
+/// |> ducky.parameters([ducky.int(42), ducky.int(18)])
+/// |> ducky.run(conn)
+/// ```
+pub fn parameters(query: Query(a), values: List(Value)) -> Query(a) {
+  Query(..query, params: list.append(list.reverse(values), query.params))
+}
+
+/// Constrained to `Query(Row)` — can only be called once.
+/// The compiler enforces single-decode.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let decoder = {
+///   use name <- decode.field(0, decode.string)
+///   use age <- decode.field(1, decode.int)
+///   decode.success(#(name, age))
+/// }
+///
+/// ducky.sql("SELECT name, age FROM users")
+/// |> ducky.returning(decoder)
+/// |> ducky.run(conn)
+/// // => Ok(Returned(count: 1, rows: [#("Alice", 30)]))
+/// ```
+pub fn returning(query: Query(Row), decoder: decode.Decoder(b)) -> Query(b) {
+  Query(statement: query.statement, params: query.params, decoder: fn(raw_row) {
+    let row_tuple = ffi.list_to_tuple(raw_row)
+    decode.run(row_tuple, decoder)
+    |> result.map_error(fn(errors) {
+      DatabaseError("Row decode failed: " <> string.inspect(errors))
+    })
+  })
+}
+
+/// ## Examples
+///
+/// ```gleam
+/// ducky.sql("SELECT 1 AS x")
+/// |> ducky.run(conn)
+/// // => Ok(Returned(count: 1, rows: [Row([Integer(1)])]))
+/// ```
+pub fn run(query: Query(a), conn: Connection) -> Result(Returned(a), Error) {
+  let params = list.reverse(query.params)
+  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
+
+  use raw <- result.try(
+    ffi.execute_query(
+      connection.native(conn.internal),
+      query.statement,
+      dynamic_params,
+    )
+    |> result.map_error(decode_nif_error),
+  )
+
+  let #(_columns, raw_rows) = raw
+  use decoded_rows <- result.try(list.try_map(raw_rows, query.decoder))
+
+  Ok(Returned(count: list.length(decoded_rows), rows: decoded_rows))
+}
+
+/// Constrained to `Query(Row)` — cannot be used after `returning`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// ducky.sql("SELECT name, age FROM users")
+/// |> ducky.as_columns(conn)
+/// // => Ok(Columnar(names: ["name", "age"], data: [[Text("Alice")], [Integer(30)]]))
+/// ```
+pub fn as_columns(
+  query: Query(Row),
+  conn: Connection,
+) -> Result(Columnar, Error) {
+  let params = list.reverse(query.params)
+  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
+
+  use raw <- result.try(
+    ffi.execute_query_columns(
+      connection.native(conn.internal),
+      query.statement,
+      dynamic_params,
+    )
+    |> result.map_error(decode_nif_error),
+  )
+
+  use decoded <- result.try(
+    list.try_map(raw, fn(col) {
+      let #(name, values) = col
+      use decoded_values <- result.map(list.try_map(values, decode_value))
+      #(name, decoded_values)
+    }),
+  )
+
+  let names = list.map(decoded, fn(col) { col.0 })
+  let data = list.map(decoded, fn(col) { col.1 })
+  Ok(Columnar(names: names, data: data))
+}
+
+/// ## Examples
+///
+/// ```gleam
+/// ducky.column(cols, "name")
+/// // => Some([Text("Alice"), Text("Bob")])
+/// ```
+pub fn column(columnar: Columnar, name: String) -> Option(List(Value)) {
+  column_lookup(columnar.names, columnar.data, name)
+}
+
+fn column_lookup(
+  names: List(String),
+  data: List(List(Value)),
+  target: String,
+) -> Option(List(Value)) {
+  case names, data {
+    [], _ -> option.None
+    _, [] -> option.None
+    [n, ..], [col, ..] if n == target -> option.Some(col)
+    [_, ..rest_names], [_, ..rest_data] ->
+      column_lookup(rest_names, rest_data, target)
+  }
+}
+
+fn decode_raw_row(raw_row: List(dynamic.Dynamic)) -> Result(Row, Error) {
+  use values <- result.map(list.try_map(raw_row, decode_value))
+  Row(values: values)
 }
 
 /// Get a value from a row by column index.

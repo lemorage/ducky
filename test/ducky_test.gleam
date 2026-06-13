@@ -1,5 +1,6 @@
 import ducky
 import gleam/dict
+import gleam/dynamic/decode
 import gleam/list
 import gleam/option
 import gleam/result
@@ -1672,4 +1673,191 @@ pub fn append_rows_wrong_column_count_test() {
     ducky.append_rows(conn, "t", [
       [ducky.Integer(1)],
     ])
+}
+
+pub fn sql_run_simple_select_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.sql("SELECT 42 AS answer")
+    |> ducky.run(conn)
+
+  result.count |> should.equal(1)
+  let assert [ducky.Row([ducky.Integer(42)])] = result.rows
+}
+
+pub fn sql_run_ddl_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let assert Ok(result) =
+    ducky.sql("CREATE TABLE t (id INT)")
+    |> ducky.run(conn)
+
+  result.count |> should.equal(0)
+  result.rows |> should.equal([])
+}
+
+pub fn sql_parameter_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT, name VARCHAR)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+    |> ducky.run(conn)
+
+  let assert Ok(result) =
+    ducky.sql("SELECT name FROM users WHERE id = ?")
+    |> ducky.parameter(ducky.int(1))
+    |> ducky.run(conn)
+
+  result.count |> should.equal(1)
+  let assert [ducky.Row([ducky.Text("Alice")])] = result.rows
+}
+
+pub fn sql_parameters_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT, name VARCHAR, age INT)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql(
+      "INSERT INTO users VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Eve', 35)",
+    )
+    |> ducky.run(conn)
+
+  let assert Ok(result) =
+    ducky.sql("SELECT name FROM users WHERE id > ? AND age > ?")
+    |> ducky.parameters([ducky.int(1), ducky.int(26)])
+    |> ducky.run(conn)
+
+  result.count |> should.equal(1)
+  let assert [ducky.Row([ducky.Text("Eve")])] = result.rows
+}
+
+pub fn sql_returning_decoder_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT, name VARCHAR)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+    |> ducky.run(conn)
+
+  let user_decoder = {
+    use id <- decode.field(0, decode.int)
+    use name <- decode.field(1, decode.string)
+    decode.success(#(id, name))
+  }
+
+  let assert Ok(result) =
+    ducky.sql("SELECT id, name FROM users ORDER BY id")
+    |> ducky.returning(user_decoder)
+    |> ducky.run(conn)
+
+  result.count |> should.equal(2)
+  result.rows |> should.equal([#(1, "Alice"), #(2, "Bob")])
+}
+
+pub fn sql_returning_with_parameter_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT, name VARCHAR)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+    |> ducky.run(conn)
+
+  let name_decoder = {
+    use name <- decode.field(0, decode.string)
+    decode.success(name)
+  }
+
+  let assert Ok(result) =
+    ducky.sql("SELECT name FROM users WHERE id = ?")
+    |> ducky.parameter(ducky.int(2))
+    |> ducky.returning(name_decoder)
+    |> ducky.run(conn)
+
+  result.count |> should.equal(1)
+  result.rows |> should.equal(["Bob"])
+}
+
+pub fn sql_as_columns_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT, name VARCHAR)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
+    |> ducky.run(conn)
+
+  let assert Ok(result) =
+    ducky.sql("SELECT id, name FROM users ORDER BY id")
+    |> ducky.as_columns(conn)
+
+  result.names |> should.equal(["id", "name"])
+  let assert [[ducky.Integer(1), ducky.Integer(2)], _names] = result.data
+}
+
+pub fn sql_as_columns_with_parameter_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT, name VARCHAR)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Eve')")
+    |> ducky.run(conn)
+
+  let assert Ok(result) =
+    ducky.sql("SELECT name FROM users WHERE id > ?")
+    |> ducky.parameter(ducky.int(1))
+    |> ducky.as_columns(conn)
+
+  result.names |> should.equal(["name"])
+  let assert [[ducky.Text("Bob"), ducky.Text("Eve")]] = result.data
+}
+
+pub fn sql_as_columns_empty_preserves_names_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT, name VARCHAR)")
+    |> ducky.run(conn)
+
+  let assert Ok(result) =
+    ducky.sql("SELECT id, name FROM users")
+    |> ducky.as_columns(conn)
+
+  result.names |> should.equal(["id", "name"])
+  result.data |> should.equal([[], []])
+}
+
+pub fn sql_run_empty_result_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE users (id INT)")
+    |> ducky.run(conn)
+
+  let assert Ok(result) =
+    ducky.sql("SELECT * FROM users")
+    |> ducky.run(conn)
+
+  result.count |> should.equal(0)
+  result.rows |> should.equal([])
+}
+
+pub fn column_helper_test() {
+  let cols =
+    ducky.Columnar(names: ["id", "name"], data: [
+      [ducky.Integer(1), ducky.Integer(2)],
+      [ducky.Text("Alice"), ducky.Text("Bob")],
+    ])
+
+  let assert option.Some(ids) = ducky.column(cols, "id")
+  ids |> should.equal([ducky.Integer(1), ducky.Integer(2)])
+
+  let assert option.Some(names) = ducky.column(cols, "name")
+  names |> should.equal([ducky.Text("Alice"), ducky.Text("Bob")])
+
+  ducky.column(cols, "missing") |> should.equal(option.None)
 }
