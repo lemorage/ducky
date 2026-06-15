@@ -1861,3 +1861,117 @@ pub fn column_helper_test() {
 
   ducky.column(cols, "missing") |> should.equal(option.None)
 }
+
+pub fn timestamp_decoder_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE events (ts TIMESTAMP)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO events VALUES ('2024-01-01 00:00:00')")
+    |> ducky.run(conn)
+
+  let decoder = {
+    use ts <- decode.field(0, ducky.timestamp_decoder())
+    decode.success(ts)
+  }
+
+  let assert Ok(result) =
+    ducky.sql("SELECT ts FROM events")
+    |> ducky.returning(decoder)
+    |> ducky.run(conn)
+
+  let assert [micros] = result.rows
+  // 2024-01-01 00:00:00 UTC in microseconds since epoch
+  micros |> should.equal(1_704_067_200_000_000)
+}
+
+pub fn date_decoder_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE events (d DATE)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO events VALUES ('2024-01-01')")
+    |> ducky.run(conn)
+
+  let decoder = {
+    use d <- decode.field(0, ducky.date_decoder())
+    decode.success(d)
+  }
+
+  let assert Ok(result) =
+    ducky.sql("SELECT d FROM events")
+    |> ducky.returning(decoder)
+    |> ducky.run(conn)
+
+  let assert [days] = result.rows
+  // 2024-01-01 is 19723 days since 1970-01-01
+  days |> should.equal(19_723)
+}
+
+pub fn time_decoder_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE events (t TIME)")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO events VALUES ('12:30:00')")
+    |> ducky.run(conn)
+
+  let decoder = {
+    use t <- decode.field(0, ducky.time_decoder())
+    decode.success(t)
+  }
+
+  let assert Ok(result) =
+    ducky.sql("SELECT t FROM events")
+    |> ducky.returning(decoder)
+    |> ducky.run(conn)
+
+  let assert [micros] = result.rows
+  // 12:30:00 = 12*3600 + 30*60 = 45000 seconds = 45_000_000_000 micros
+  micros |> should.equal(45_000_000_000)
+}
+
+pub fn interval_decoder_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+
+  let decoder = {
+    use iv <- decode.field(0, ducky.interval_decoder())
+    decode.success(iv)
+  }
+
+  let assert Ok(result) =
+    ducky.sql("SELECT INTERVAL '1 year 2 months 3 days 4 hours'")
+    |> ducky.returning(decoder)
+    |> ducky.run(conn)
+
+  let assert [#(months, days, nanos)] = result.rows
+  months |> should.equal(14)
+  days |> should.equal(3)
+  // 4 hours in nanoseconds
+  nanos |> should.equal(14_400_000_000_000)
+}
+
+pub fn decimal_decoder_test() {
+  let assert Ok(conn) = ducky.connect(":memory:")
+  let assert Ok(_) =
+    ducky.sql("CREATE TABLE prices (amount DECIMAL(10,2))")
+    |> ducky.run(conn)
+  let assert Ok(_) =
+    ducky.sql("INSERT INTO prices VALUES (99.95)")
+    |> ducky.run(conn)
+
+  let decoder = {
+    use amount <- decode.field(0, ducky.decimal_decoder())
+    decode.success(amount)
+  }
+
+  let assert Ok(result) =
+    ducky.sql("SELECT amount FROM prices")
+    |> ducky.returning(decoder)
+    |> ducky.run(conn)
+
+  let assert ["99.95"] = result.rows
+}

@@ -516,7 +516,7 @@ pub fn parameters(query: Query(a), values: List(Value)) -> Query(a) {
   Query(..query, params: list.append(list.reverse(values), query.params))
 }
 
-/// Constrained to `Query(Row)` — can only be called once.
+/// Constrained to `Query(Row)`. Can only be called once.
 /// The compiler enforces single-decode.
 ///
 /// ## Examples
@@ -569,7 +569,7 @@ pub fn run(query: Query(a), conn: Connection) -> Result(Returned(a), Error) {
   Ok(Returned(count: list.length(decoded_rows), rows: decoded_rows))
 }
 
-/// Constrained to `Query(Row)` — cannot be used after `returning`.
+/// Constrained to `Query(Row)`. Cannot be used after `returning`.
 ///
 /// ## Examples
 ///
@@ -634,6 +634,39 @@ fn column_lookup(
 fn decode_raw_row(raw_row: List(dynamic.Dynamic)) -> Result(Row, Error) {
   use values <- result.map(list.try_map(raw_row, decode_value))
   Row(values: values)
+}
+
+/// Raw microseconds since epoch.
+/// NIF returns temporals as {type_tag, value} tuples.
+pub fn timestamp_decoder() -> decode.Decoder(Int) {
+  use value <- decode.subfield([1], decode.int)
+  decode.success(value)
+}
+
+/// Raw days since epoch.
+pub fn date_decoder() -> decode.Decoder(Int) {
+  use value <- decode.subfield([1], decode.int)
+  decode.success(value)
+}
+
+/// Raw microseconds since midnight.
+pub fn time_decoder() -> decode.Decoder(Int) {
+  use value <- decode.subfield([1], decode.int)
+  decode.success(value)
+}
+
+/// Returns #(months, days, nanos). NIF sends {interval, m, d, n}.
+pub fn interval_decoder() -> decode.Decoder(#(Int, Int, Int)) {
+  use months <- decode.subfield([1], decode.int)
+  use days <- decode.subfield([2], decode.int)
+  use nanos <- decode.subfield([3], decode.int)
+  decode.success(#(months, days, nanos))
+}
+
+/// Lossless string. Avoids floating-point representation issues.
+pub fn decimal_decoder() -> decode.Decoder(String) {
+  use value <- decode.subfield([1], decode.string)
+  decode.success(value)
 }
 
 /// Get a value from a row by column index.
