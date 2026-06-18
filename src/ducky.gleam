@@ -4,39 +4,42 @@
 ////
 //// ```gleam
 //// import ducky
-//// import gleam/int
+//// import gleam/dynamic/decode
 //// import gleam/io
+//// import gleam/list
 //// import gleam/result
+////
+//// pub type Duck {
+////   Duck(name: String, quack_db: Int)
+//// }
 ////
 //// pub fn main() {
 ////   use conn <- ducky.with_connection(":memory:")
 ////
-////   // Create our duck pond
-////   use _ <- result.try(ducky.exec(conn, "
-////     CREATE TABLE ducks (name TEXT, quack_volume INT, is_rubber BOOLEAN)
-////   "))
-////   use _ <- result.try(ducky.exec(conn, "
-////     INSERT INTO ducks VALUES
-////       ('Sir Quacksalot', 95, false),
-////       ('Duck Norris', 100, false),
-////       ('Mallard Fillmore', 72, false),
-////       ('Squeaky', 0, true)
-////   "))
+////   use _ <- result.try(
+////     ducky.sql("CREATE TABLE ducks (name TEXT, quack_db INT)")
+////     |> ducky.run(conn),
+////   )
+////   use _ <- result.try(
+////     ducky.sql("INSERT INTO ducks VALUES
+////       ('Sir Quacksalot', 95), ('Duck Norris', 100)")
+////     |> ducky.run(conn),
+////   )
 ////
-////   // Find the loudest quacker
-////   use result <- result.map(ducky.query(conn, "
-////     SELECT name, quack_volume FROM ducks
-////     WHERE is_rubber = false
-////     ORDER BY quack_volume DESC LIMIT 1
-////   "))
-////
-////   case result.rows {
-////     [ducky.Row([ducky.Text(name), ducky.Integer(volume)])] ->
-////       io.println(name <> " wins at " <> int.to_string(volume) <> " decibels!")
-////     _ -> io.println("The pond is empty...")
+////   let decoder = {
+////     use name <- decode.field(0, decode.string)
+////     use quack_db <- decode.field(1, decode.int)
+////     decode.success(Duck(name:, quack_db:))
 ////   }
+////
+////   use result <- result.map(
+////     ducky.sql("SELECT name, quack_db FROM ducks ORDER BY quack_db DESC")
+////     |> ducky.returning(decoder)
+////     |> ducky.run(conn),
+////   )
+////
+////   list.each(result.rows, fn(d) { io.println(d.name) })
 //// }
-//// // => Duck Norris wins at 100 decibels!
 //// ```
 
 import ducky/internal/connection
@@ -59,6 +62,8 @@ pub type Error {
   UnsupportedParameterType(type_name: String)
   /// Statement has been finalized and cannot be used.
   StatementFinalized
+  /// Row decoder returned errors.
+  DecodeFailed(errors: List(decode.DecodeError))
   /// Generic error from DuckDB.
   DatabaseError(message: String)
 }
@@ -92,25 +97,12 @@ pub type Row {
   Row(values: List(Value))
 }
 
-/// A complete query result with column metadata.
-pub type DataFrame {
-  DataFrame(columns: List(String), rows: List(Row))
-}
-
-/// A single column from a column-oriented query result.
-pub type Column {
-  Column(name: String, values: List(Value))
-}
-
-/// A complete column-oriented query result.
-pub type ColumnDataFrame {
-  ColumnDataFrame(columns: List(Column))
-}
-
+/// Typed query result. `a` is the decoded row type.
 pub type Returned(a) {
   Returned(count: Int, rows: List(a))
 }
 
+/// Column-oriented result. Each inner list corresponds to one column.
 pub type Columnar {
   Columnar(names: List(String), data: List(List(Value)))
 }
@@ -177,20 +169,18 @@ pub fn close(conn: Connection) -> Result(Nil, Error) {
   |> result.map_error(decode_nif_error)
 }
 
-/// Returns the database path for a connection.
+/// Useful for logging which database a connection points to.
 pub fn path(conn: Connection) -> String {
   connection.path(conn.internal)
 }
 
-/// Executes operations with automatic connection cleanup.
-///
-/// Connection closes automatically on success or error.
+/// Opens a connection, runs the callback, then closes. Preferred over connect/close.
 ///
 /// ## Examples
 ///
 /// ```gleam
 /// use conn <- with_connection(":memory:")
-/// query(conn, "SELECT 42")
+/// ducky.sql("SELECT 42") |> ducky.run(conn)
 /// ```
 pub fn with_connection(
   db_path: String,
@@ -203,16 +193,14 @@ pub fn with_connection(
   res
 }
 
-/// Executes operations within a transaction.
-///
-/// Commits on success, rolls back on error.
+/// Wraps a callback in BEGIN/COMMIT. Rolls back on error.
 ///
 /// ## Examples
 ///
 /// ```gleam
 /// transaction(conn, fn(conn) {
-///   use _ <- result.try(query(conn, "UPDATE accounts ..."))
-///   query(conn, "SELECT * FROM accounts")
+///   use _ <- result.try(ducky.sql("UPDATE accounts ...") |> ducky.run(conn))
+///   ducky.sql("SELECT * FROM accounts") |> ducky.run(conn)
 /// })
 /// ```
 pub fn transaction(
@@ -240,112 +228,6 @@ pub fn transaction(
   }
 }
 
-/// Executes a SQL statement that returns no rows.
-///
-/// Use for DDL and DML statements (CREATE, INSERT, UPDATE, DELETE, etc.).
-/// For statements that return rows, use `query` or `query_params`.
-///
-/// ## Examples
-///
-/// ```gleam
-/// exec(conn, "CREATE TABLE users (id INT, name VARCHAR)")
-/// // => Ok(Nil)
-///
-/// exec(conn, "INSERT INTO users VALUES (1, 'Alice')")
-/// // => Ok(Nil)
-/// ```
-pub fn exec(conn: Connection, sql: String) -> Result(Nil, Error) {
-  ffi.execute_query(connection.native(conn.internal), sql, [])
-  |> result.map_error(decode_nif_error)
-  |> result.replace(Nil)
-}
-
-/// Executes a SQL query and returns structured results.
-///
-/// The query runs on a dirty scheduler to avoid blocking the BEAM.
-/// Results are loaded into memory. For large datasets, use LIMIT/OFFSET
-/// or filter in SQL to reduce memory usage.
-///
-/// ## Examples
-///
-/// ```gleam
-/// query(conn, "SELECT id, name FROM users WHERE active = true")
-/// // => Ok(DataFrame(columns: ["id", "name"], rows: [...]))
-///
-/// // For large datasets, paginate:
-/// query(conn, "SELECT * FROM users LIMIT 1000 OFFSET 0")
-/// ```
-pub fn query(conn: Connection, sql: String) -> Result(DataFrame, Error) {
-  ffi.execute_query(connection.native(conn.internal), sql, [])
-  |> result.map_error(decode_nif_error)
-  |> result.try(decode_dataframe)
-}
-
-/// Executes a SQL query and returns column-oriented results.
-///
-/// This uses DuckDB's Arrow result path in the native layer and returns each
-/// result column with its values. Existing row-oriented queries should continue
-/// to use `query`.
-pub fn query_columns(
-  conn: Connection,
-  sql: String,
-) -> Result(ColumnDataFrame, Error) {
-  ffi.execute_query_columns(connection.native(conn.internal), sql, [])
-  |> result.map_error(decode_nif_error)
-  |> result.try(decode_column_dataframe)
-}
-
-/// Executes a parameterized SQL query with bound parameters to prevent SQL injection.
-///
-/// ## Examples
-///
-/// ```gleam
-/// query_params(conn, "SELECT * FROM users WHERE id = ? AND age > ?", [
-///   int(42),
-///   int(18),
-/// ])
-/// // => Ok(DataFrame(...))
-/// ```
-///
-/// ## Security
-///
-/// Always use this function when including user input in queries:
-/// ```gleam
-/// // UNSAFE - SQL injection risk
-/// query(conn, "SELECT * FROM users WHERE name = '" <> user_input <> "'")
-///
-/// // SAFE - parameters are properly escaped
-/// query_params(conn, "SELECT * FROM users WHERE name = ?", [text(user_input)])
-/// ```
-pub fn query_params(
-  conn: Connection,
-  sql: String,
-  params: List(Value),
-) -> Result(DataFrame, Error) {
-  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
-
-  ffi.execute_query(connection.native(conn.internal), sql, dynamic_params)
-  |> result.map_error(decode_nif_error)
-  |> result.try(decode_dataframe)
-}
-
-/// Executes a parameterized SQL query and returns column-oriented results.
-pub fn query_params_columns(
-  conn: Connection,
-  sql: String,
-  params: List(Value),
-) -> Result(ColumnDataFrame, Error) {
-  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
-
-  ffi.execute_query_columns(
-    connection.native(conn.internal),
-    sql,
-    dynamic_params,
-  )
-  |> result.map_error(decode_nif_error)
-  |> result.try(decode_column_dataframe)
-}
-
 /// Prepares a SQL statement for repeated execution.
 ///
 /// Validates the SQL syntax immediately and returns a statement handle.
@@ -371,10 +253,7 @@ pub fn prepare(conn: Connection, sql: String) -> Result(Statement, Error) {
   |> result.map_error(decode_nif_error)
 }
 
-/// Executes a prepared statement with parameters.
-///
-/// Returns a DataFrame with the query results, or an empty DataFrame
-/// for DDL/DML statements.
+/// Runs a prepared statement. For hot loops with repeated bindings.
 ///
 /// ## Examples
 ///
@@ -383,24 +262,21 @@ pub fn prepare(conn: Connection, sql: String) -> Result(Statement, Error) {
 /// let assert Ok(result) = execute(stmt, [int(18)])
 /// // result.rows contains matching users
 /// ```
-pub fn execute(stmt: Statement, params: List(Value)) -> Result(DataFrame, Error) {
-  use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
-
-  ffi.execute_prepared(stmt.native, dynamic_params)
-  |> result.map_error(decode_nif_error)
-  |> result.try(decode_dataframe)
-}
-
-/// Executes a prepared statement and returns column-oriented results.
-pub fn execute_columns(
+pub fn execute(
   stmt: Statement,
   params: List(Value),
-) -> Result(ColumnDataFrame, Error) {
+) -> Result(Returned(Row), Error) {
   use dynamic_params <- result.try(list.try_map(params, value_to_dynamic))
 
-  ffi.execute_prepared_columns(stmt.native, dynamic_params)
-  |> result.map_error(decode_nif_error)
-  |> result.try(decode_column_dataframe)
+  use raw <- result.try(
+    ffi.execute_prepared(stmt.native, dynamic_params)
+    |> result.map_error(decode_nif_error),
+  )
+
+  let #(_columns, raw_rows) = raw
+  use decoded_rows <- result.try(list.try_map(raw_rows, decode_raw_row))
+
+  Ok(Returned(count: list.length(decoded_rows), rows: decoded_rows))
 }
 
 /// Finalizes a prepared statement, releasing its resources.
@@ -447,23 +323,18 @@ pub fn with_statement(
   res
 }
 
-/// Bulk-appends rows via DuckDB's appender API. Bypasses SQL parsing.
-///
-/// Atomic: all rows succeed or none are committed on error.
-/// The table name is resolved by catalog lookup, not SQL interpolation.
-/// Empty rows return `Ok(0)` without a NIF call.
+/// Bypasses SQL parsing. Atomic: all rows succeed or none commit.
 ///
 /// ## Examples
 ///
 /// ```gleam
-/// let assert Ok(count) = append_rows(conn, "users", [
+/// let assert Ok(count) = append(conn, "users", [
 ///   [int(1), text("Alice")],
 ///   [int(2), text("Bob")],
-///   [int(3), text("Charlie")],
 /// ])
-/// // count == 3
+/// // count == 2
 /// ```
-pub fn append_rows(
+pub fn append(
   conn: Connection,
   table: String,
   rows: List(List(Value)),
@@ -481,7 +352,7 @@ pub fn append_rows(
   }
 }
 
-/// No I/O happens here; the query executes only at `run` or `as_columns`.
+/// Builds a query value. No I/O until `run` or `as_columns`.
 ///
 /// ## Examples
 ///
@@ -493,6 +364,8 @@ pub fn sql(statement: String) -> Query(Row) {
   Query(statement: statement, params: [], decoder: decode_raw_row)
 }
 
+/// Binds one parameter to the next `?` placeholder.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -501,10 +374,12 @@ pub fn sql(statement: String) -> Query(Row) {
 /// |> ducky.run(conn)
 /// ```
 pub fn parameter(query: Query(a), value: Value) -> Query(a) {
-  // Prepend for O(1); reversed before execution to preserve ? binding order.
+  // Params stored in reverse; run/as_columns reverse before execution.
   Query(..query, params: [value, ..query.params])
 }
 
+/// Binds multiple parameters at once, in order.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -513,11 +388,12 @@ pub fn parameter(query: Query(a), value: Value) -> Query(a) {
 /// |> ducky.run(conn)
 /// ```
 pub fn parameters(query: Query(a), values: List(Value)) -> Query(a) {
+  // Params stored in reverse; run/as_columns reverse before execution.
   Query(..query, params: list.append(list.reverse(values), query.params))
 }
 
-/// Constrained to `Query(Row)`. Can only be called once.
-/// The compiler enforces single-decode.
+/// Sets a decoder for typed rows. Constrained to `Query(Row)`.
+/// Can only be called once; the compiler enforces this.
 ///
 /// ## Examples
 ///
@@ -537,12 +413,12 @@ pub fn returning(query: Query(Row), decoder: decode.Decoder(b)) -> Query(b) {
   Query(statement: query.statement, params: query.params, decoder: fn(raw_row) {
     let row_tuple = ffi.list_to_tuple(raw_row)
     decode.run(row_tuple, decoder)
-    |> result.map_error(fn(errors) {
-      DatabaseError("Row decode failed: " <> string.inspect(errors))
-    })
+    |> result.map_error(fn(errors) { DecodeFailed(errors: errors) })
   })
 }
 
+/// Executes the query. Use `sql` for one-shot queries; `prepare`/`execute` for hot loops.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -569,7 +445,7 @@ pub fn run(query: Query(a), conn: Connection) -> Result(Returned(a), Error) {
   Ok(Returned(count: list.length(decoded_rows), rows: decoded_rows))
 }
 
-/// Constrained to `Query(Row)`. Cannot be used after `returning`.
+/// Returns columns instead of rows. DuckDB's columnar strength exposed.
 ///
 /// ## Examples
 ///
@@ -607,6 +483,8 @@ pub fn as_columns(
   Ok(Columnar(names: names, data: data))
 }
 
+/// Looks up a column by name. Returns None if not found.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -830,34 +708,6 @@ fn value_to_dynamic(value: Value) -> Result(dynamic.Dynamic, Error) {
     Struct(_) -> Error(UnsupportedParameterType("Struct"))
     Union(_, _) -> Error(UnsupportedParameterType("Union"))
   }
-}
-
-/// Decodes raw NIF result into a DataFrame.
-fn decode_dataframe(
-  raw: #(List(String), List(List(dynamic.Dynamic))),
-) -> Result(DataFrame, Error) {
-  let #(columns, rows) = raw
-  use decoded_rows <- result.try(
-    list.try_map(rows, fn(row) {
-      use values <- result.map(list.try_map(row, decode_value))
-      Row(values: values)
-    }),
-  )
-  Ok(DataFrame(columns: columns, rows: decoded_rows))
-}
-
-/// Decodes raw NIF column result into a ColumnDataFrame.
-fn decode_column_dataframe(
-  raw: List(#(String, List(dynamic.Dynamic))),
-) -> Result(ColumnDataFrame, Error) {
-  use decoded_columns <- result.try(
-    list.try_map(raw, fn(column) {
-      let #(name, values) = column
-      use decoded_values <- result.map(list.try_map(values, decode_value))
-      Column(name: name, values: decoded_values)
-    }),
-  )
-  Ok(ColumnDataFrame(columns: decoded_columns))
 }
 
 /// Decodes a dynamic value from the NIF into a typed Value.

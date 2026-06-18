@@ -63,13 +63,6 @@ pub fn execute_prepared(
   params: List(Dynamic),
 ) -> Result(#(List(String), List(List(Dynamic))), Dynamic)
 
-/// Executes a prepared statement and returns column-oriented results.
-@external(erlang, "ducky_nif", "execute_prepared_columns")
-pub fn execute_prepared_columns(
-  stmt: NativeStatement,
-  params: List(Dynamic),
-) -> Result(List(#(String, List(Dynamic))), Dynamic)
-
 /// Finalizes a prepared statement, releasing resources.
 @external(erlang, "ducky_nif", "finalize")
 pub fn finalize(stmt: NativeStatement) -> Result(Dynamic, Dynamic)
