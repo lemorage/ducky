@@ -18,7 +18,12 @@ defmodule Ducky.MixProject do
       description: "Use DuckDB in Gleam!",
       files: ~w(
         src
-        priv
+        priv/VERSION
+        priv/fetch_nif.erl
+        priv/ducky_nif/Cargo.toml
+        priv/ducky_nif/Cargo.lock
+        priv/ducky_nif/.cargo/config.toml
+        priv/ducky_nif/src
         gleam.toml
         LICENSE
         README.md

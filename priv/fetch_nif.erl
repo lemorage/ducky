@@ -26,11 +26,15 @@ main(_Args) ->
     OutputPath = filename:join([PrivDir, "native", "ducky_nif" ++ extension()]),
     ManifestPath = filename:join([PrivDir, "ducky_nif", "Cargo.toml"]),
 
-    % Skip if NIF already exists
-    case filelib:is_file(OutputPath) of
+    % Skip only if NIF exists AND matches host platform.
+    % A stale binary from a different OS (e.g. shipped in a Hex tarball
+    % built on macOS but installed on Linux) must be replaced, not reused.
+    case filelib:is_file(OutputPath) andalso platform_match(OutputPath) of
         true ->
             halt(0);
         false ->
+            % Drop any stale binary so the download path runs cleanly
+            _ = file:delete(OutputPath),
             inets:start(),
             ssl:start(),
             Platform = detect_platform(),
@@ -97,6 +101,49 @@ extension() ->
         {win32, _} -> ".dll";
         _ -> ".so"
     end.
+
+%% Reads the first bytes of a shared library and checks whether the file
+%% format matches the host OS. Mach-O on Linux (or vice versa) returns false
+%% so the caller can re-download instead of crashing the BEAM at load time.
+platform_match(Path) ->
+    case file:open(Path, [read, binary, raw]) of
+        {ok, Fd} ->
+            Result = case file:read(Fd, 4) of
+                {ok, Magic} -> magic_matches_os(Magic);
+                _ -> false
+            end,
+            file:close(Fd),
+            Result;
+        _ ->
+            false
+    end.
+
+magic_matches_os(<<16#7F, $E, $L, $F>>) ->
+    %% ELF — Linux
+    case os:type() of
+        {unix, linux} -> true;
+        _ -> false
+    end;
+magic_matches_os(<<16#CF, 16#FA, 16#ED, 16#FE>>) ->
+    %% Mach-O 64-bit (little-endian) — macOS
+    case os:type() of
+        {unix, darwin} -> true;
+        _ -> false
+    end;
+magic_matches_os(<<16#CE, 16#FA, 16#ED, 16#FE>>) ->
+    %% Mach-O 32-bit (little-endian) — macOS
+    case os:type() of
+        {unix, darwin} -> true;
+        _ -> false
+    end;
+magic_matches_os(<<$M, $Z, _, _>>) ->
+    %% PE (DLL) — Windows
+    case os:type() of
+        {win32, _} -> true;
+        _ -> false
+    end;
+magic_matches_os(_) ->
+    false.
 
 binary_name(Platform) ->
     Ext = case string:str(Platform, "windows") > 0 of

@@ -39,7 +39,7 @@ RESET := \033[0m
 .DEFAULT_GOAL := help
 
 # Phony targets
-.PHONY: help build build-nif test clean format check publish release version dev
+.PHONY: help build build-nif test clean format check publish release version dev verify-package
 
 #-----------------------------------------------------------------------------
 # Public targets
@@ -137,7 +137,27 @@ version:
 	@echo ""
 	@echo "$(CYAN)Don't forget to update CHANGELOG.md!$(RESET)"
 
-publish: clean
+## verify-package: Build the Hex tarball and assert no host artifacts leak in
+verify-package:
+	@echo "$(CYAN)Verifying package contents...$(RESET)"
+	@rm -rf /tmp/ducky-verify && mkdir -p /tmp/ducky-verify
+	@mix hex.build -o /tmp/ducky-verify/ducky.tar >/dev/null
+	@cd /tmp/ducky-verify && tar -xf ducky.tar contents.tar.gz \
+		&& tar -tzf contents.tar.gz > listing.txt
+	@if grep -E '^priv/native/' /tmp/ducky-verify/listing.txt; then \
+		echo "$(CYAN)ERROR: priv/native/ leaked into the Hex package$(RESET)"; \
+		rm -rf /tmp/ducky-verify; \
+		exit 1; \
+	fi
+	@if grep -E '^priv/ducky_nif/target/' /tmp/ducky-verify/listing.txt; then \
+		echo "$(CYAN)ERROR: priv/ducky_nif/target/ leaked into the Hex package$(RESET)"; \
+		rm -rf /tmp/ducky-verify; \
+		exit 1; \
+	fi
+	@rm -rf /tmp/ducky-verify
+	@echo "$(GREEN)✓ Package contents clean$(RESET)"
+
+publish: clean verify-package
 	@echo "$(CYAN)Publishing to Hex...$(RESET)"
 	@echo "Current version: $(VERSION)"
 	@read -p "Proceed with publish? [y/N] " answer; \
